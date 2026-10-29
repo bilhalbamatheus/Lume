@@ -7,9 +7,7 @@ import {
   Search,
   Calendar,
   Building2,
-  RefreshCw,
-  Plus
-} from 'lucide-react';
+  RefreshCw} from 'lucide-react';
 
 interface ProjectItem {
   id: string;

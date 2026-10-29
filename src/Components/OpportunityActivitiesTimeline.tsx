@@ -13,7 +13,6 @@ import {
   Plus,
   X,
   Send,
-  Calendar,
   CheckCircle2,
   Trash2
 } from 'lucide-react';
@@ -195,7 +194,7 @@ export const OpportunityActivitiesTimeline: React.FC<OpportunityActivitiesTimeli
     return `${d.toLocaleDateString('pt-BR')} ${d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
   };
 
-  const userInitial = user?.email ? user.email.slice(0, 2).toUpperCase() : 'EU';
+  const userInitial = (user as any)?.email ? (user as any)?.email.slice(0, 2).toUpperCase() : 'EU';
 
   return (
     <div className="space-y-4">
@@ -275,7 +274,7 @@ export const OpportunityActivitiesTimeline: React.FC<OpportunityActivitiesTimeli
                 <div className="w-5 h-5 rounded-full bg-sky-600 text-white flex items-center justify-center text-[9px] font-bold">
                   {userInitial}
                 </div>
-                <span>Eu ({user?.email?.split('@')[0] || 'Usuário'})</span>
+                <span>Eu ({(user as any)?.email?.split('@')[0] || 'Usuário'})</span>
               </div>
             </div>
 

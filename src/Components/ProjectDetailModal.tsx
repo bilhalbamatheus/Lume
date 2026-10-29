@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
@@ -8,13 +8,9 @@ import { EntityDocuments } from './EntityDocuments';
 import { ContactProfileModal } from './ContactProfileModal';
 import {
   X,
-  Compass,
-  HardHat,
-  Calendar,
   Building2,
   User,
   Clock,
-  CheckCircle2,
   CheckSquare,
   Square,
   Trash2,
@@ -89,7 +85,7 @@ export const ProjectDetailModal: React.FC<ProjectDetailModalProps> = ({
   zIndexLevel = 'base'
 }) => {
   const { user } = useAuth();
-  const { permissions } = usePermissions();
+  usePermissions();
 
   const [loading, setLoading] = useState(true);
   const [project, setProject] = useState<ProjectData | null>(null);

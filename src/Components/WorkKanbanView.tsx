@@ -2,20 +2,12 @@ import React, { useState, useMemo } from 'react';
 import type { WorkItem, WorkTask } from './WorkItemRow';
 import {
   Calendar,
-  CheckCircle2,
-  Clock,
-  AlertTriangle,
-  Plus,
   CornerDownRight,
   Edit2,
   CheckSquare,
   Square,
   Sliders,
-  DollarSign,
-  ChevronRight,
-  Layers,
-  ArrowRight
-} from 'lucide-react';
+  ChevronRight} from 'lucide-react';
 
 interface WorkKanbanViewProps {
   items: WorkItem[];
@@ -38,10 +30,7 @@ export const WorkKanbanView: React.FC<WorkKanbanViewProps> = ({
   onToggleTaskStatus,
   onSelectItemForDrawer,
   onOpenEditItemModal,
-  onOpenDeleteItemModal,
-  onOpenEditTaskModal,
-  onOpenCreateChildModal
-}) => {
+  onOpenEditTaskModal}) => {
   const [groupBy, setGroupBy] = useState<'type' | 'status'>('type');
   const [expandedSubtasks, setExpandedSubtasks] = useState<Record<string, boolean>>({});
 

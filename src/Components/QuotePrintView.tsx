@@ -293,9 +293,6 @@ export const QuotePrintView: React.FC<QuotePrintViewProps> = ({
 
   if (!isOpen) return null;
 
-  const contactPhone = contact?.phone;
-  const contactEmail = contact?.email;
-  const contactAddr = contact?.address;
 
   return createPortal(
     <div id="quote-print-modal-root" className="fixed inset-0 z-[200] flex flex-col bg-slate-900/80 backdrop-blur-xs overflow-y-auto">

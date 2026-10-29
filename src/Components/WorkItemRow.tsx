@@ -17,7 +17,6 @@ import {
   Unlink,
   Loader2,
   CheckCircle2,
-  Users,
   UserCheck,
   Camera,
   Layers,
@@ -228,7 +227,7 @@ export const WorkItemRow: React.FC<WorkItemRowProps> = ({
   const [isSavingEntry, setIsSavingEntry] = useState(false);
   const [checklistAction, setChecklistAction] = useState<'progress' | 'complete'>('complete');
 
-  const [isCompletingAllItem, setIsCompletingAllItem] = useState(false);
+  const [, setIsCompletingAllItem] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
 
   // Estados do Modal de Bloqueio (Restrição)
@@ -611,7 +610,9 @@ export const WorkItemRow: React.FC<WorkItemRowProps> = ({
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
                 {effectiveIsBlocked && (
-                  <Lock size={13} className="text-amber-500 shrink-0" title="Item Bloqueado por Dependência" />
+                 <span title="Item Bloqueado por Dependência" className="inline-flex items-center">
+  <Lock size={13} className="text-amber-500 shrink-0" />
+</span>
                 )}
                 
                 <span className={`font-bold text-xs sm:text-sm break-words transition-colors ${effectiveIsBlocked ? 'text-amber-900' : 'text-slate-900 hover:text-sky-600'}`}>

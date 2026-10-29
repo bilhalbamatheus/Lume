@@ -5,14 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import {
   X,
   Printer,
-  Calendar,
-  Layers,
-  CheckSquare,
-  Building2,
   FileText,
-  Loader2,
-  CheckCircle2,
-  Clock
 } from 'lucide-react';
 
 interface WorkSchedulePrintModalProps {
@@ -49,7 +42,6 @@ export const WorkSchedulePrintModal: React.FC<WorkSchedulePrintModalProps> = ({
   workTitle,
   workCode,
   tasks,
-  allItems,
   getHierarchyBreadcrumb
 }) => {
   const { user } = useAuth();
@@ -162,7 +154,7 @@ export const WorkSchedulePrintModal: React.FC<WorkSchedulePrintModalProps> = ({
 
   const stats = useMemo(() => {
     const total = filteredTasks.length;
-    const progressCount = filteredTasks.filter(t => t.has_progress_tracking).length;
+    const progressCount = filteredTasks.filter((t: any) => t.has_progress_tracking).length;
     const checklistCount = total - progressCount;
     return { total, progressCount, checklistCount };
   }, [filteredTasks]);
@@ -505,7 +497,7 @@ export const WorkSchedulePrintModal: React.FC<WorkSchedulePrintModalProps> = ({
                         </td>
 
                         <td className="py-2.5 px-3 text-right font-black text-slate-900">
-                          {t.has_progress_tracking ? `${t.quantity_planned} ${t.unit || 'un'}` : 'Checklist'}
+                          {(t as any)?.has_progress_tracking ? `${t.quantity_planned} ${t.unit || 'un'}` : 'Checklist'}
                         </td>
                       </tr>
                     );

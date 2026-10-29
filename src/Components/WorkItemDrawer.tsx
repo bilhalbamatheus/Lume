@@ -9,14 +9,12 @@ import {
   Calendar,
   Lock,
   Tag,
-  DollarSign,
   CheckCircle2,
   Square,
   CheckSquare,
   Users,
   UserCheck,
   Camera,
-  FileText,
   Plus,
   Trash2,
   Edit2,
@@ -25,19 +23,14 @@ import {
   Upload,
   Paperclip,
   ChevronDown,
-  Search,
   FileCheck,
   FolderTree,
   ChevronRight,
   ExternalLink,
-  AlertTriangle,
   PlayCircle,
   ShieldAlert,
   ShieldCheck,
-  MoreVertical,
-  Unlink,
-  Settings
-} from 'lucide-react';
+  MoreVertical} from 'lucide-react';
 
 interface SettingOption {
   id: string;
@@ -150,12 +143,9 @@ export const WorkItemDrawer: React.FC<WorkItemDrawerProps> = ({
   locationOptions = [],
   itemTypeOptions = [],
   subitemTypes = [],
-  measurementType = 'por_subitem',
-  onOpenQuickSettings,
   onSelectChildItem,
   onOpenCreateChildModal,
   onToggleTaskStatus,
-  onUpdateTaskExecutedQty,
   onSaveInlineTask,
   onItemUpdated,
   onSaveTaskEntry,
@@ -167,7 +157,7 @@ export const WorkItemDrawer: React.FC<WorkItemDrawerProps> = ({
 
   // Abas
   const [activeTab, setActiveTab] = useState<'item' | 'subitem' | 'attachments'>('subitem');
-  const [saving, setSaving] = useState(false);
+  const [] = useState(false);
 
   // Modais de Ação no Item Principal
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -342,7 +332,7 @@ export const WorkItemDrawer: React.FC<WorkItemDrawerProps> = ({
     t => t.title.toLowerCase().includes(depSearchTerm.toLowerCase())
   );
   const selectedNewDepObj = availableTasksList.find(t => t.id === taskDependsOnId);
-  const minNewStartDate = selectedNewDepObj?.dueDate || undefined;
+  const minNewStartDate = (selectedNewDepObj as any)?.due_date || (selectedNewDepObj as any)?.dueDate || undefined;
 
   const filteredTeamMembers = entryTeamId === 'all' 
     ? teamMembers 
@@ -1115,7 +1105,7 @@ export const WorkItemDrawer: React.FC<WorkItemDrawerProps> = ({
                             autoFocus
                             required
                             value={taskTitle}
-                            onChange={e => setNewTaskTitle(e.target.value)}
+                            onChange={e => setTaskTitle(e.target.value)}
                             placeholder="Ex: Montagem dos trilhos de fixação..."
                             className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-sky-500 font-medium"
                           />
@@ -1288,7 +1278,7 @@ export const WorkItemDrawer: React.FC<WorkItemDrawerProps> = ({
                                   className="w-full text-left px-2.5 py-1.5 hover:bg-sky-50 text-xs font-semibold text-slate-800 flex flex-col cursor-pointer"
                                 >
                                   <span>{opt.title}</span>
-                                  <span className="text-[10px] text-slate-400 font-normal">Item: {opt.parentTitle}</span>
+                                  <span className="text-[10px] text-slate-400 font-normal">Item: {(opt as any)?.parentTitle}</span>
                                 </button>
                               ))}
                             </div>

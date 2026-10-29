@@ -432,7 +432,7 @@ export const CompanySettingsView: React.FC<CompanySettingsViewProps> = ({
   const [loadingMembers, setLoadingMembers] = useState(false);
   const [currentLoggedUserId, setCurrentLoggedUserId] = useState<string | null>(null);
   const [memberToDeactivate, setMemberToDeactivate] = useState<TeamMember | null>(null);
-  const [deactivatingMember, setDeactivatingMember] = useState(false);
+  const [deactivatingMember] = useState(false);
 
   const [activeDropdownMemberId, setActiveDropdownMemberId] = useState<string | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -1592,50 +1592,6 @@ export const CompanySettingsView: React.FC<CompanySettingsViewProps> = ({
     }
   };
 
-  const handleConfirmDeactivateMember = async () => {
-    if (!memberToDeactivate) return;
-    setActiveDropdownMemberId(null);
-
-    if (memberToDeactivate.user_id && currentLoggedUserId && memberToDeactivate.user_id === currentLoggedUserId) {
-      alert('Você não pode inativar a sua própria conta.');
-      setMemberToDeactivate(null);
-      return;
-    }
-
-    try {
-      setDeactivatingMember(true);
-
-      if (memberToDeactivate.status === 'invited') {
-        await supabase
-          .from('company_invites')
-          .delete()
-          .eq('id', memberToDeactivate.id);
-
-        setMembers(prev => prev.filter(m => m.id !== memberToDeactivate.id));
-      } else {
-        const { error: memErr } = await supabase
-          .from('memberships')
-          .update({ status: 'inativo' })
-          .eq('id', memberToDeactivate.id);
-
-        if (memErr) throw memErr;
-
-        setMembers(prev => prev.map(m => {
-          if (m.id === memberToDeactivate.id) {
-            return { ...m, status: 'inactive' };
-          }
-          return m;
-        }));
-      }
-
-      setMemberToDeactivate(null);
-    } catch (err: any) {
-      console.error('Erro ao inativar colaborador:', err);
-      alert(`Erro ao inativar colaborador: ${err.message || ''}`);
-    } finally {
-      setDeactivatingMember(false);
-    }
-  };
 
   const handleReactivateMember = async (member: TeamMember) => {
     setActiveDropdownMemberId(null);

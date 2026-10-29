@@ -5,18 +5,14 @@ import {
   X,
   Search,
   Users,
-  Calendar,
   Save,
   Loader2,
   Trash2,
   CheckSquare,
   Square,
   BookOpenCheck,
-  UserCheck,
-  Building2,
-  AlertCircle
-} from 'lucide-react';
-import type { WorkItem, WorkTask, TeamMember } from './WorkItemRow';
+  UserCheck} from 'lucide-react';
+import type { WorkItem, WorkTask } from './WorkItemRow';
 
 interface DailyWorkLogModalProps {
   isOpen: boolean;

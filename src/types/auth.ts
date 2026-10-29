@@ -21,6 +21,7 @@ export interface Profile {
 }
 
 export interface AuthUser {
+  id: string | undefined;
   profile: Profile;
   company: Company;
   role: UserRole;

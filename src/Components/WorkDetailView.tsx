@@ -12,7 +12,6 @@ import { DailyWorkLogModal } from './DailyWorkLogModal';
 import {
   ArrowLeft,
   Building2,
-  Calendar,
   CheckSquare,
   CalendarRange,
   DollarSign,
@@ -29,7 +28,6 @@ import {
   Check,
   Settings,
   BookOpenCheck,
-  Users,
   Star,
   LayoutDashboard,
   ChevronDown

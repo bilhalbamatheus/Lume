@@ -4,11 +4,7 @@ import {
   Building2,
   Sliders,
   Network,
-  ChevronRight,
-  ShieldCheck,
-  Package,
-  Layers
-} from 'lucide-react';
+  ChevronRight} from 'lucide-react';
 
 interface SettingsHubModalProps {
   isOpen: boolean;

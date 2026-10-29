@@ -73,6 +73,7 @@ export const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
   defaultDueTime
 }) => {
   const { user } = useAuth();
+  const authUser = user as any;
 
   const [saving, setSaving] = useState(false);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
@@ -145,8 +146,8 @@ export const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
 
         // Garante que o criador/utilizador atual está sempre nos responsáveis
         const assignees = activityToEdit.assignee_ids || [];
-        if (user.id && !assignees.includes(user.id)) {
-          setSelectedAssigneeIds([user.id, ...assignees]);
+        if (authUser?.id && !assignees.includes(authUser?.id)) {
+          setSelectedAssigneeIds([authUser?.id, ...assignees]);
         } else {
           setSelectedAssigneeIds(assignees);
         }
@@ -189,8 +190,8 @@ export const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
         }
 
         // O criador é sempre o responsável inicial predefinido
-        if (user.id) {
-          setSelectedAssigneeIds([user.id]);
+        if (authUser?.id) {
+          setSelectedAssigneeIds([authUser?.id]);
         }
       }
     }
@@ -273,8 +274,8 @@ export const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
 
   // Filtra os membros da equipa excluindo o próprio criador do dropdown
   const otherTeamMembers = useMemo(() => {
-    return teamMembers.filter((m) => m.id !== user?.id);
-  }, [teamMembers, user?.id]);
+    return teamMembers.filter((m) => m.id !== authUser?.id);
+  }, [teamMembers,authUser?.id]);
 
   // Filtros em tempo real
   const filteredOpportunities = useMemo(() => {
@@ -302,7 +303,7 @@ export const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
     try {
       setSaving(true);
       const { data: sessionData } = await supabase.auth.getSession();
-      const currentUserId = sessionData.session?.user?.id || user.id;
+      const currentUserId = sessionData.session?.user?.id || authUser?.id;
 
       // Garante que o criador está sempre presente na lista final de responsáveis
       const finalAssignees = Array.from(new Set([currentUserId, ...selectedAssigneeIds]));
@@ -380,14 +381,14 @@ export const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
     }
   };
 
-  const currentUserObj = teamMembers.find((m) => m.id === user?.id) || {
-    id: user?.id || '',
+  const currentUserObj = teamMembers.find((m) => m.id ===authUser?.id) || {
+    id: authUser?.id || '',
     name: user?.profile?.full_name || 'Você (Criador)',
     avatar_url: user?.profile?.avatar_url || null
   };
 
   const additionalSelectedMembers = teamMembers.filter(
-    (m) => m.id !== user?.id && selectedAssigneeIds.includes(m.id)
+    (m) => m.id !== authUser?.id && selectedAssigneeIds.includes(m.id)
   );
 
   if (!isOpen) return null;

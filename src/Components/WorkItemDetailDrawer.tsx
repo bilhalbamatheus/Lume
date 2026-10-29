@@ -1,11 +1,10 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import type { WorkItem, WorkTask } from './WorkItemRow';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import {
   X,
   Calendar,
-  DollarSign,
   Plus,
   CheckSquare,
   Square,
@@ -129,14 +128,12 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
   isOpen,
   onClose,
   item,
-  measurementType,
   allItems = [],
   allTasks = [],
   teamMembers = [],
   companyTeams = [],
   onItemUpdated,
   onToggleTaskStatus,
-  onOpenCreateChildModal,
   onSaveTaskEntry,
   onOpenBlockTaskModal,
   onUnblockTask,
@@ -164,7 +161,7 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
   // Formulário de Nova Subtarefa
   const [isAddingTask, setIsAddingTask] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState('');
-  const [newTaskSubitemType, setNewTaskSubitemType] = useState('');
+  const [newTaskSubitemType] = useState('');
   const [newTaskDescription, setNewTaskDescription] = useState('');
   const [newTaskPlannedQty, setNewTaskPlannedQty] = useState('1');
   const [newTaskUnit, setNewTaskUnit] = useState('un');
@@ -1101,7 +1098,7 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
                             <div className="relative">
                               <button
                                 type="button"
-                                disabled={effectiveIsBlocked && !isTaskBlockedManual} // Se for restrição manual ele precisa poder clicar pra desbloquear
+                                disabled={isEffectiveBlocked && !isTaskBlockedManual} // Se for restrição manual ele precisa poder clicar pra desbloquear
                                 onClick={() => setOpenTaskMenuId(openTaskMenuId === task.id ? null : task.id)}
                                 className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg cursor-pointer transition disabled:opacity-50"
                               >

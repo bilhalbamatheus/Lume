@@ -4,7 +4,6 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissions } from '../hooks/usePermissions';
 import {
-  Calendar as CalendarIcon,
   ChevronLeft,
   ChevronRight,
   Clock,
@@ -16,8 +15,6 @@ import {
   Square,
   Loader2,
   CalendarRange,
-  Users,
-  Edit3,
   X,
   Save,
   Search,
@@ -29,11 +26,9 @@ import {
   ChevronsDown,
   ChevronsUp,
   UserCheck,
-  Tag,
   PlayCircle,
   ShieldAlert,
   ShieldCheck,
-  MapPin
 } from 'lucide-react';
 
 interface WorkTask {
@@ -104,8 +99,6 @@ type ZoomLevel = 'days' | 'weeks' | 'months';
 
 export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({ 
   workId, 
-  workTitle = 'Obra em Execução',
-  workCode 
 }) => {
   const { user } = useAuth();
   const { permissions, loading: loadingPerms } = usePermissions();
@@ -535,8 +528,8 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
         let matchesStatus = true;
         const isDone = t.status === 'concluida';
         const isBlocked = t.status === 'bloqueada';
-        const isLate = !isDone && t.due_date && t.due_date < nowStr;
-        const isUnassigned = !t.due_date && !t.start_date;
+        const isLate = Boolean(!isDone && t.due_date && t.due_date < nowStr);
+        const isUnassigned = Boolean(!t.due_date && !t.start_date);
 
         if (filterStatus === 'concluida') matchesStatus = isDone;
         else if (filterStatus === 'em_andamento') matchesStatus = (!isDone && !isBlocked && !isLate && !isUnassigned);

@@ -8,7 +8,6 @@ import { EntityDocuments } from './EntityDocuments';
 import {
   X,
   User,
-  Building2,
   Phone,
   Mail,
   MapPin,
@@ -310,7 +309,7 @@ export const ContactProfileModal: React.FC<ContactProfileModalProps> = ({
 
   const [showChangeOwnerModal, setShowChangeOwnerModal] = useState(false);
   const [companyMembers, setCompanyMembers] = useState<MemberOption[]>([]);
-  const [loadingMembers, setLoadingMembers] = useState(false);
+  const [, setLoadingMembers] = useState(false);
   const [savingNewOwner, setSavingNewOwner] = useState(false);
 
   const [opportunities, setOpportunities] = useState<ContactOpportunityItem[]>([]);
@@ -333,7 +332,7 @@ export const ContactProfileModal: React.FC<ContactProfileModalProps> = ({
       try {
         const { data: sessionData } = await supabase.auth.getSession();
         const activeUserId =
-          user?.id ||
+          (user as any)?.id ||
           (user as any)?.user?.id ||
           (user as any)?.profile?.id ||
           sessionData.session?.user?.id;
@@ -359,7 +358,7 @@ export const ContactProfileModal: React.FC<ContactProfileModalProps> = ({
     if (!contact) return false;
     if (currentMembershipId && contact.created_by === currentMembershipId) return true;
 
-    const currentUserId = resolvedUserId || user?.id || (user as any)?.user?.id || (user as any)?.profile?.id;
+    const currentUserId = resolvedUserId || (user as any)?.id|| (user as any)?.user?.id || (user as any)?.profile?.id;
     const profileId = (user as any)?.profile?.id;
 
     if (currentUserId && contact.created_by === currentUserId) return true;
@@ -428,7 +427,7 @@ export const ContactProfileModal: React.FC<ContactProfileModalProps> = ({
   }, [isOpen, activeContactId]);
 
   useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
+    const handleClickOutside = (e: Event) => {
       if (actionsMenuRef.current && !actionsMenuRef.current.contains(e.target as Node)) {
         setIsActionsMenuOpen(false);
       }
@@ -1680,7 +1679,9 @@ export const ContactProfileModal: React.FC<ContactProfileModalProps> = ({
                             </span>
                             <div className="flex items-center gap-1.5 shrink-0">
                               {p.is_primary && (
-                                <Star size={13} className="fill-amber-400 text-amber-500" title="Principal" />
+                                <span title="Principal">
+  <Star size={13} className="fill-amber-400 text-amber-500" />
+</span>
                               )}
                               {canEditThisContact && (
                                 <button
@@ -1714,7 +1715,9 @@ export const ContactProfileModal: React.FC<ContactProfileModalProps> = ({
                             )}
 
                             {!p.notes && p.is_primary && (
-                              <Star size={13} className="fill-amber-400 text-amber-500" title="Principal" />
+                              <span title="Principal">
+  <Star size={13} className="fill-amber-400 text-amber-500" />
+</span>
                             )}
 
                             {!p.notes && canEditThisContact && (
@@ -1764,7 +1767,9 @@ export const ContactProfileModal: React.FC<ContactProfileModalProps> = ({
                             </span>
                             <div className="flex items-center gap-1.5 shrink-0">
                               {e.is_primary && (
-                                <Star size={13} className="fill-amber-400 text-amber-500" title="Principal" />
+                                <span title="Principal">
+  <Star size={13} className="fill-amber-400 text-amber-500" />
+</span>
                               )}
                               {canEditThisContact && (
                                 <button
@@ -1793,7 +1798,9 @@ export const ContactProfileModal: React.FC<ContactProfileModalProps> = ({
                           {!e.notes && (
                             <div className="flex items-center gap-1.5 shrink-0">
                               {e.is_primary && (
-                                <Star size={13} className="fill-amber-400 text-amber-500" title="Principal" />
+                                <span title="Principal">
+  <Star size={13} className="fill-amber-400 text-amber-500" />
+</span>
                               )}
                               {canEditThisContact && (
                                 <button
@@ -1845,7 +1852,9 @@ export const ContactProfileModal: React.FC<ContactProfileModalProps> = ({
                               </span>
                               <div className="flex items-center gap-1.5 shrink-0">
                                 {addr.is_primary && (
-                                  <Star size={13} className="fill-amber-400 text-amber-500" title="Principal" />
+                                  <span title="Principal">
+  <Star size={13} className="fill-amber-400 text-amber-500" />
+</span>
                                 )}
                                 {canEditThisContact && (
                                   <button
@@ -1876,7 +1885,9 @@ export const ContactProfileModal: React.FC<ContactProfileModalProps> = ({
                               {!addr.notes && (
                                 <>
                                   {addr.is_primary && (
-                                    <Star size={13} className="fill-amber-400 text-amber-500" title="Principal" />
+                                    <span title="Principal">
+  <Star size={13} className="fill-amber-400 text-amber-500" />
+</span>
                                   )}
                                   {canEditThisContact && (
                                     <button
@@ -2065,8 +2076,6 @@ export const ContactProfileModal: React.FC<ContactProfileModalProps> = ({
                   entityType="contact"
                   entityId={contact.id}
                   companyId={contact.company_id}
-                  readOnly={!canEditThisContact}
-                  hideHeaderActions={!showInteractionForm}
                 />
               </div>
             )}
@@ -2169,8 +2178,6 @@ export const ContactProfileModal: React.FC<ContactProfileModalProps> = ({
                   entityType="contact"
                   entityId={contact.id}
                   companyId={contact.company_id}
-                  readOnly={!canEditThisContact}
-                  hideHeaderActions={isMobile}
                 />
               </div>
             )}

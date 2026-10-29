@@ -5,8 +5,6 @@ import {
   Building2,
   Camera,
   MapPin,
-  Mail,
-  Phone,
   FileText,
   CheckCircle2,
   Save,

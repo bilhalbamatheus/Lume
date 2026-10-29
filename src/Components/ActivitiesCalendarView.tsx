@@ -325,7 +325,7 @@ export const ActivitiesCalendarView: React.FC<ActivitiesCalendarViewProps> = ({
     const startOfWeek = new Date(currentDate);
     startOfWeek.setDate(currentDate.getDate() - currentDate.getDay());
 
-    const days = [];
+    const days: Date[] = [];
     for (let i = 0; i < 7; i++) {
       const d = new Date(startOfWeek);
       d.setDate(startOfWeek.getDate() + i);

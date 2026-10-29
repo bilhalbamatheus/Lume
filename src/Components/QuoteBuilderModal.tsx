@@ -15,7 +15,6 @@ import {
   Calendar,
   Clock,
   CreditCard,
-  FileText,
   BookmarkPlus,
   TrendingUp,
   AlertTriangle,

@@ -14,9 +14,7 @@ import {
   MapPin,
   MessageCircle,
   Mail,
-  CheckSquare,
-  AlertTriangle
-} from 'lucide-react';
+  CheckSquare} from 'lucide-react';
 
 interface ActivityDetailModalProps {
   activity: any | null;

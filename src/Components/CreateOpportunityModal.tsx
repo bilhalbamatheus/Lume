@@ -57,7 +57,7 @@ export const CreateOpportunityModal: React.FC<CreateOpportunityModalProps> = ({
   initialContactId
 }) => {
   const { user } = useAuth();
-  const { permissions } = usePermissions();
+  usePermissions();
 
   const [loading, setLoading] = useState(false);
   const [loadingData, setLoadingData] = useState(false);

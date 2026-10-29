@@ -8,7 +8,6 @@ import {
   Plus,
   Eye,
   Loader2,
-  Download,
   Receipt,
   FileCheck2,
   ArrowUpRight,
@@ -269,25 +268,6 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
   }, [taskEntries, bmStartDate, bmEndDate]);
 
   // Agrupa os apontamentos disponíveis por Tarefa para visualização amigável
-  const groupedEntriesByTask = useMemo(() => {
-    const grouped = new Map<string, { task: any, entries: any[], totalQty: number }>();
-    
-    availableEntriesToMeasure.forEach(entry => {
-      const taskId = entry.work_task_id;
-      if (!grouped.has(taskId)) {
-        grouped.set(taskId, {
-          task: tasksMap.get(taskId),
-          entries: [],
-          totalQty: 0
-        });
-      }
-      const group = grouped.get(taskId)!;
-      group.entries.push(entry);
-      group.totalQty += Number(entry.quantity_executed);
-    });
-
-    return Array.from(grouped.values()).filter(g => g.task);
-  }, [availableEntriesToMeasure, tasksMap]);
 
   // Filtra itens aptos (se a medição for apenas por Item - Fallback Antigo)
   const availableItems = useMemo(() => {
@@ -470,7 +450,7 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
           summarizedByTask.get(taskId)!.qty += Number(entry.quantity_executed);
         });
 
-        summarizedByTask.forEach((summary, taskId) => {
+        summarizedByTask.forEach((summary) => {
           const t = summary.task;
           const qty = summary.qty;
           const planned = Number(t.quantity_planned) || 1;

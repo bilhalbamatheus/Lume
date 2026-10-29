@@ -6,26 +6,18 @@ import {
   AlertTriangle,
   CheckCircle2,
   Clock,
-  Layers,
   MapPin,
   FileText,
   Save,
   Loader2,
-  DollarSign,
   ArrowRight,
-  ExternalLink,
-  ShieldCheck,
   CheckSquare,
-  Activity,
-  AlertCircle,
   PieChart,
   BarChart3,
   Scale,
   Receipt,
-  FileCheck2,
   LayoutDashboard,
   BookOpenCheck,
-  Users,
   UserCheck
 } from 'lucide-react';
 
@@ -78,7 +70,7 @@ export const WorkOverviewTab: React.FC<WorkOverviewTabProps> = ({
   const [tasks, setTasks] = useState<any[]>([]);
   const [measurements, setMeasurements] = useState<any[]>([]);
   const [invoices, setInvoices] = useState<any[]>([]);
-  const [recentPhotos, setRecentPhotos] = useState<any[]>([]);
+  const [, setRecentPhotos] = useState<any[]>([]);
   const [taskEntries, setTaskEntries] = useState<TaskEntryRecord[]>([]);
 
   // Notas da Obra

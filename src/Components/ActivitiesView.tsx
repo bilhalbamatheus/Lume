@@ -174,8 +174,9 @@ export const ActivitiesView: React.FC<ActivitiesViewProps> = ({ initialFilterOpt
   const [isCreateOpportunityOpen, setIsCreateOpportunityOpen] = useState(false);
   const [opportunityContactId, setOpportunityContactId] = useState<string | null>(null);
 
-  const currentUserId = user?.id || (user as any)?.user?.id || (user as any)?.profile?.id;
-  const currentUserName = user?.profile?.full_name || (user as any)?.user_metadata?.full_name || 'Usuário';
+  const authUser = user as any;
+  const currentUserId = authUser?.id || authUser?.profile?.id || authUser?.user?.id || null;
+  const currentUserName = authUser?.profile?.full_name || authUser?.user_metadata?.full_name || 'Utilizador';
   const isAdmin = Boolean(permissions.isOwnerOrAdmin);
 
   useEffect(() => {
@@ -482,7 +483,7 @@ export const ActivitiesView: React.FC<ActivitiesViewProps> = ({ initialFilterOpt
 
     const otherAssigneeIds = act.assignees
       .map((a) => a.id)
-      .filter((id) => id !== currentUserId && id !== user?.id);
+      .filter((id) => id !== currentUserId && id !== (user as any)?.id);
 
     setInlineSelectedAssignees(otherAssigneeIds);
     setIsInlineCreateOpen(true);
@@ -506,7 +507,7 @@ export const ActivitiesView: React.FC<ActivitiesViewProps> = ({ initialFilterOpt
 
     try {
       setSavingInline(true);
-      const activeUserId = currentUserId || user.id;
+      const activeUserId = currentUserId || authUser?.id;
 
       const combinedDueDateTime = inlineDueDate
         ? new Date(`${inlineDueDate}T${inlineDueTime || '12:00'}:00`).toISOString()
@@ -612,7 +613,7 @@ export const ActivitiesView: React.FC<ActivitiesViewProps> = ({ initialFilterOpt
   }) => {
     if (!user?.company?.id) return;
 
-    const activeUserId = currentUserId || user.id;
+    const activeUserId = currentUserId || authUser?.id;
     const combinedDueDateTime = new Date(`${data.dueDate}T${data.dueTime || '12:00'}:00`).toISOString();
 
     const titlesMap: Record<string, string> = {
@@ -692,7 +693,7 @@ export const ActivitiesView: React.FC<ActivitiesViewProps> = ({ initialFilterOpt
   // Filtragem
   const filteredActivities = useMemo(() => {
     const now = new Date();
-    const activeId = currentUserId || user?.id;
+    const activeId = currentUserId || (user as any)?.id;
 
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
     const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
@@ -762,18 +763,18 @@ export const ActivitiesView: React.FC<ActivitiesViewProps> = ({ initialFilterOpt
 
       return true;
     });
-  }, [activities, activeTab, typeFilter, priorityFilter, duePeriodFilter, assigneeFilter, searchText, currentUserId, user?.id, displayMode, isAdmin]);
+  }, [activities, activeTab, typeFilter, priorityFilter, duePeriodFilter, assigneeFilter, searchText, currentUserId, (user as any)?.id, displayMode, isAdmin]);
 
   const availableTeamMembers = useMemo(() => {
     return teamMembers.filter((m) => {
       const isSelf =
         m.id === currentUserId ||
-        m.id === user?.id ||
+        m.id === (user as any)?.id ||
         m.name.toLowerCase() === currentUserName.toLowerCase() ||
-        (user?.email && m.email && m.email.toLowerCase() === user.email.toLowerCase());
+        ((user as any)?.email && m.email && m.email.toLowerCase() === authUser?.email.toLowerCase());
       return !isSelf;
     });
-  }, [teamMembers, currentUserId, user?.id, currentUserName, user?.email]);
+  }, [teamMembers, currentUserId, (user as any)?.id, currentUserName, (user as any)?.email]);
 
   return (
     <div className="flex-1 flex flex-col min-w-0 bg-slate-50/50 p-3 sm:p-6 lg:p-8 space-y-3.5">

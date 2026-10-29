@@ -16,33 +16,24 @@ import {
   Loader2,
   Check,
   FileText,
-  Calendar,
   Building2,
-  ChevronDown,
   Snowflake,
   RotateCcw,
   Briefcase,
   Handshake,
-  UserCheck,
   Edit3,
   Trash2,
-  Phone,
   Mail,
-  Search,
   ExternalLink,
   Trophy,
-  Zap,
   Printer,
-  Tag,
   MoreVertical,
   Copy,
   Clock,
   Paperclip,
   HardHat,
   Compass,
-  Sliders,
   ArrowLeft,
-  ChevronRight,
   FileUp,
   History as HistoryIcon
 } from 'lucide-react';
@@ -311,7 +302,7 @@ export const OpportunityDetailModal: React.FC<OpportunityDetailModalProps> = ({
   }, [canEditOpportunity, canManageQuotes]);
 
   useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
+    const handleClickOutside = (event: Event) => {
       const target = event.target as Node;
       if (actionsMenuRef.current && !actionsMenuRef.current.contains(target)) {
         setIsActionsMenuOpen(false);
@@ -405,7 +396,7 @@ export const OpportunityDetailModal: React.FC<OpportunityDetailModalProps> = ({
           ...contactObj,
           phone: phones?.[0]?.phone_number || null,
           email: emails?.[0]?.email || null
-        };
+        } as any;
       }
 
       let partnerObj = Array.isArray(opp.partner) ? opp.partner[0] : opp.partner;
@@ -419,7 +410,7 @@ export const OpportunityDetailModal: React.FC<OpportunityDetailModalProps> = ({
           ...partnerObj,
           phone: pPhones?.[0]?.phone_number || null,
           email: pEmails?.[0]?.email || null
-        };
+        }as any;
       }
 
       const formattedOpp: OpportunityData = {
@@ -513,7 +504,7 @@ export const OpportunityDetailModal: React.FC<OpportunityDetailModalProps> = ({
         })
         .filter(Boolean);
 
-      setTeamMembers(activeMembers);
+      setTeamMembers((activeMembers)as any);
 
       setPartners((partnersRes.data || []).map((p: any) => ({
         id: p.id,
@@ -871,7 +862,7 @@ export const OpportunityDetailModal: React.FC<OpportunityDetailModalProps> = ({
       if (createErr) throw createErr;
 
       if (newQuote?.id && sourceItems && sourceItems.length > 0) {
-        const clonedLines = sourceItems.map((it: any) => ({
+        const clonedLines = sourceItems.map((it: any, idx: number) => ({
           company_id: user.company.id,
           quote_id: newQuote.id,
           catalog_item_id: it.catalog_item_id || null,
@@ -882,7 +873,7 @@ export const OpportunityDetailModal: React.FC<OpportunityDetailModalProps> = ({
           quantity: it.quantity || 1,
           unit_cost: it.unit_cost || 0,
           unit_price: it.unit_price || 0,
-          sort_order: idx => idx + 1,
+          sort_order: idx + 1,
           notes: it.notes || null
         }));
 
@@ -1512,8 +1503,6 @@ export const OpportunityDetailModal: React.FC<OpportunityDetailModalProps> = ({
                   entityId={opportunity.id}
                   companyId={opportunity.company_id || user?.company?.id || ''}
                   contactId={opportunity.contact_id}
-                  readOnly={!canEditOpportunity}
-                  hideHeaderActions={!showInteractionForm}
                 />
               </div>
             )}
@@ -1671,8 +1660,6 @@ export const OpportunityDetailModal: React.FC<OpportunityDetailModalProps> = ({
                   entityType="opportunity"
                   entityId={opportunity.id}
                   companyId={opportunity.company_id || user?.company?.id || ''}
-                  readOnly={!canEditOpportunity}
-                  hideHeaderActions={isMobile}
                 />
               </div>
             )}

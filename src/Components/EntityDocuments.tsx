@@ -13,10 +13,7 @@ import {
   Eye,
   Loader2,
   X,
-  Plus,
-  ExternalLink,
-  Tag
-} from 'lucide-react';
+  ExternalLink} from 'lucide-react';
 
 export interface DocumentItem {
   id: string;
@@ -152,7 +149,6 @@ export const EntityDocuments: React.FC<EntityDocumentsProps> = ({
       const currentUserId = user?.profile?.id || user?.id;
 
       // Sanitiza o nome do arquivo
-      const fileExt = selectedFile.name.split('.').pop();
       const sanitizedName = selectedFile.name.replace(/[^a-zA-Z0-9.-]/g, '_');
       const storagePath = `documents/${entityType}/${entityId}/${Date.now()}_${sanitizedName}`;
 
