@@ -26,7 +26,8 @@ import {
   UserCheck,
   PlayCircle,
   ShieldAlert,
-  ShieldCheck
+  ShieldCheck,
+  DollarSign
 } from 'lucide-react';
 
 interface TeamMember {
@@ -57,14 +58,14 @@ interface WorkItemDetailDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   item: WorkItem | null;
-  measurementType: 'por_subitem' | 'por_item' | 'sem_medicao';
+  measurementType?: 'por_subitem' | 'por_item' | 'sem_medicao';
   allItems?: WorkItem[];
   allTasks?: WorkTask[];
   teamMembers?: TeamMember[];
   companyTeams?: CompanyTeam[];
   onItemUpdated: () => void;
   onToggleTaskStatus: (item: WorkItem, task: WorkTask) => void;
-  onUpdateTaskExecutedQty: (item: WorkItem, task: WorkTask, rawVal: string) => void;
+  onUpdateTaskExecutedQty?: (item: WorkItem, task: WorkTask, rawVal: string) => void;
   onOpenCreateChildModal?: (parentId: string, parentTitle: string) => void;
   onSaveTaskEntry?: (payload: DailyEntryPayload) => Promise<void>;
   onOpenBlockTaskModal?: (task: WorkTask, parentItemId: string) => void;
@@ -84,9 +85,13 @@ interface WorkItemDetailDrawerProps {
     isBlocked?: boolean,
     blockReason?: string
   ) => void;
+  canManageItems?: boolean;
+  canCreateTasks?: boolean;
+  canDeleteItems?: boolean;
   canCompleteTasks?: boolean;
   canReopenTasks?: boolean;
   canAssignExecutors?: boolean;
+  canViewPrices?: boolean;
 }
 
 interface AttachmentFile {
@@ -128,6 +133,7 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
   isOpen,
   onClose,
   item,
+  measurementType = 'por_subitem',
   allItems = [],
   allTasks = [],
   teamMembers = [],
@@ -138,9 +144,13 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
   onOpenBlockTaskModal,
   onUnblockTask,
   onSaveInlineTask,
+  canManageItems = true,
+  canCreateTasks = true,
+  canDeleteItems = true,
   canCompleteTasks = true,
   canReopenTasks = true,
-  canAssignExecutors = true
+  canAssignExecutors = true,
+  canViewPrices = true
 }) => {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<'detalhes' | 'subtarefas' | 'anexos' | 'diario'>('detalhes');
@@ -236,8 +246,9 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
     ? teamMembers 
     : teamMembers.filter(m => m.team_id === entryTeamId);
 
-  // AÇÃO: CONCLUIR TODOS OS SUBITENS E O ITEM PAI (GERA DIÁRIO EM LOTE)
+  // AÇÃO: CONCLUIR TODOS OS SUBITENS E O ITEM PAI
   const handleCompleteAll = async () => {
+    if (!canCompleteTasks) return;
     if (!confirm('Deseja marcar este equipamento e TODAS as suas subtarefas como 100% concluídos?')) return;
 
     try {
@@ -281,9 +292,13 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
   };
 
   const handleSaveItem = async () => {
+    if (!canManageItems) return;
+
     try {
       setSaving(true);
-      const parsedPrice = parseFloat(unitPrice.replace(/\./g, '').replace(',', '.')) || 0;
+      const parsedPrice = canViewPrices
+        ? parseFloat(unitPrice.replace(/\./g, '').replace(',', '.')) || 0
+        : item.unit_price || 0;
 
       const { error } = await supabase
         .from('work_items')
@@ -312,7 +327,7 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
 
   const handleCreateTaskSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newTaskTitle.trim() || isItemBlocked) return;
+    if (!canCreateTasks || !newTaskTitle.trim() || isItemBlocked) return;
 
     if (createAsBlocked && !createBlockReason.trim()) {
       alert('Informe o motivo da restrição para criar a tarefa como bloqueada.');
@@ -325,7 +340,7 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
       newTaskHasProgress,
       newTaskPlannedQty,
       newTaskUnit,
-      newTaskPrice,
+      canViewPrices ? newTaskPrice : '0',
       newTaskStartDate || undefined,
       newTaskDueDate || undefined,
       newTaskDependsOnId || undefined,
@@ -348,12 +363,14 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
   };
 
   const toggleExecutorSelection = (memberName: string) => {
+    if (!canAssignExecutors) return;
     setNewTaskExecutors(prev =>
       prev.includes(memberName) ? prev.filter(m => m !== memberName) : [...prev, memberName]
     );
   };
 
   const handleDeleteTask = async (taskId: string) => {
+    if (!canDeleteItems) return;
     if (!confirm('Deseja excluir esta subtarefa?')) return;
     try {
       setSaving(true);
@@ -368,6 +385,7 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
   };
 
   const handleUnlinkTaskDependency = async (task: WorkTask) => {
+    if (!canManageItems) return;
     try {
       setSaving(true);
       const { error } = await supabase
@@ -428,6 +446,7 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
   };
 
   const handleDeleteAttachment = async (attachmentId: string) => {
+    if (!canDeleteItems) return;
     try {
       const updatedAttachments = attachments.filter(a => a.id !== attachmentId);
       setAttachments(updatedAttachments);
@@ -438,7 +457,7 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
     }
   };
 
-  // NOVA LÓGICA DE APONTAMENTO
+  // APONTAMENTO
   const handleTaskCheckboxClick = (task: WorkTask) => {
     if (task.status === 'bloqueada') return;
 
@@ -466,7 +485,7 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
   };
 
   const handleConfirmCompletion = async () => {
-    if (!completingTask) return;
+    if (!completingTask || !canCompleteTasks) return;
     
     try {
       setIsSavingEntry(true);
@@ -489,7 +508,6 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
         });
         onItemUpdated();
       } else {
-        // Fallback
         onToggleTaskStatus(item, completingTask);
       }
       setCompletingTask(null);
@@ -532,25 +550,33 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
 
           <div className="flex items-center gap-2">
             {/* BOTÃO CONCLUIR TUDO DA ESTRUTURA */}
-            <button
-              onClick={handleCompleteAll}
-              disabled={saving || isDone}
-              title="Concluir este item e todas as suas tarefas vinculadas de uma só vez"
-              className="px-3 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-2xs disabled:opacity-50"
-            >
-              <CheckCircle2 size={15} className="text-emerald-600" />
-              <span className="hidden sm:inline">Concluir Tudo</span>
-            </button>
+            {!isDone && canCompleteTasks && (
+              <button
+                type="button"
+                onClick={handleCompleteAll}
+                disabled={saving || isDone}
+                title="Concluir este item e todas as suas tarefas vinculadas de uma só vez"
+                className="px-3 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-2xs disabled:opacity-50"
+              >
+                <CheckCircle2 size={15} className="text-emerald-600" />
+                <span className="hidden sm:inline">Concluir Tudo</span>
+              </button>
+            )}
+
+            {canManageItems && (
+              <button
+                type="button"
+                onClick={handleSaveItem}
+                disabled={saving}
+                className="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer shadow-2xs disabled:opacity-50 active:scale-98"
+              >
+                {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                <span>Guardar</span>
+              </button>
+            )}
 
             <button
-              onClick={handleSaveItem}
-              disabled={saving}
-              className="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer shadow-2xs disabled:opacity-50 active:scale-98"
-            >
-              {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-              <span>Guardar</span>
-            </button>
-            <button
+              type="button"
               onClick={onClose}
               className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 rounded-xl transition cursor-pointer"
             >
@@ -562,6 +588,7 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
         {/* NAVEGAÇÃO DE ABAS INTERNAS */}
         <div className="flex items-center gap-1 px-5 pt-3 border-b border-slate-100 shrink-0 overflow-x-auto scrollbar-none">
           <button
+            type="button"
             onClick={() => setActiveTab('detalhes')}
             className={`pb-2.5 px-3 text-xs font-bold transition cursor-pointer border-b-2 flex items-center gap-1.5 shrink-0 ${
               activeTab === 'detalhes'
@@ -573,6 +600,7 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
             <span>Atributos & Prazos</span>
           </button>
           <button
+            type="button"
             onClick={() => setActiveTab('subtarefas')}
             className={`pb-2.5 px-3 text-xs font-bold transition cursor-pointer border-b-2 flex items-center gap-1.5 shrink-0 ${
               activeTab === 'subtarefas'
@@ -587,6 +615,7 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
             </span>
           </button>
           <button
+            type="button"
             onClick={() => setActiveTab('anexos')}
             className={`pb-2.5 px-3 text-xs font-bold transition cursor-pointer border-b-2 flex items-center gap-1.5 shrink-0 ${
               activeTab === 'anexos'
@@ -601,6 +630,7 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
             </span>
           </button>
           <button
+            type="button"
             onClick={() => setActiveTab('diario')}
             className={`pb-2.5 px-3 text-xs font-bold transition cursor-pointer border-b-2 flex items-center gap-1.5 shrink-0 ${
               activeTab === 'diario'
@@ -623,9 +653,10 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
                 <label className="block font-semibold text-slate-600 mb-1">Nome do Item / Equipamento</label>
                 <input
                   type="text"
+                  disabled={!canManageItems}
                   value={title}
                   onChange={e => setTitle(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900 text-sm focus:ring-2 focus:ring-sky-500"
+                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900 text-sm focus:ring-2 focus:ring-sky-500 disabled:opacity-75 disabled:bg-slate-100"
                 />
               </div>
 
@@ -634,18 +665,20 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
                   <label className="block font-semibold text-slate-600 mb-1">Tag / Código</label>
                   <input
                     type="text"
+                    disabled={!canManageItems}
                     value={code}
                     onChange={e => setCode(e.target.value)}
                     placeholder="Ex: M-01"
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-mono text-slate-800"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-mono text-slate-800 disabled:opacity-75 disabled:bg-slate-100"
                   />
                 </div>
                 <div>
                   <label className="block font-semibold text-slate-600 mb-1">Status Operacional</label>
                   <select
+                    disabled={!canManageItems}
                     value={status}
                     onChange={e => setStatus(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-semibold text-slate-800 cursor-pointer"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-semibold text-slate-800 cursor-pointer disabled:opacity-75 disabled:bg-slate-100"
                   >
                     <option value="nao_iniciado">Não iniciado</option>
                     <option value="em_andamento">Em andamento</option>
@@ -677,37 +710,42 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
                     <label className="block text-[11px] font-semibold text-slate-500 mb-1">Início das Atividades</label>
                     <input
                       type="date"
+                      disabled={!canManageItems}
                       value={startDate}
                       onChange={e => setStartDate(e.target.value)}
-                      className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-xl font-semibold text-slate-800"
+                      className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-xl font-semibold text-slate-800 disabled:opacity-75"
                     />
                   </div>
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-500 mb-1">Prazo / Conclusão</label>
                     <input
                       type="date"
+                      disabled={!canManageItems}
                       value={dueDate}
                       onChange={e => setDueDate(e.target.value)}
-                      className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-xl font-semibold text-slate-800"
+                      className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-xl font-semibold text-slate-800 disabled:opacity-75"
                     />
                   </div>
                 </div>
               </div>
 
-              {/* Medição Financeira do Item */}
-              <div>
-                <label className="block font-semibold text-slate-600 mb-1">Valor Previsto do Equipamento (R$)</label>
-                <div className="relative">
-                  <span className="absolute left-3.5 top-2.5 font-bold text-slate-400">R$</span>
-                  <input
-                    type="text"
-                    value={unitPrice}
-                    onChange={e => setUnitPrice(formatCurrencyInput(e.target.value))}
-                    placeholder="0,00"
-                    className="w-full pl-10 pr-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-black text-slate-900 text-sm focus:ring-2 focus:ring-sky-500"
-                  />
+              {/* Medição Financeira do Item: Apenas se canViewPrices for verdadeiro */}
+              {canViewPrices && (
+                <div>
+                  <label className="block font-semibold text-slate-600 mb-1">Valor Previsto do Equipamento (R$)</label>
+                  <div className="relative">
+                    <span className="absolute left-3.5 top-2.5 font-bold text-slate-400">R$</span>
+                    <input
+                      type="text"
+                      disabled={!canManageItems}
+                      value={unitPrice}
+                      onChange={e => setUnitPrice(formatCurrencyInput(e.target.value))}
+                      placeholder="0,00"
+                      className="w-full pl-10 pr-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-black text-slate-900 text-sm focus:ring-2 focus:ring-sky-500 disabled:opacity-75"
+                    />
+                  </div>
                 </div>
-              </div>
+              )}
 
               {/* Barra de Progresso Físico */}
               <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-1.5">
@@ -735,22 +773,24 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
                   <h4 className="font-bold text-slate-800 text-xs">Subtarefas & Checklist de Campo</h4>
                   <p className="text-[11px] text-slate-400">Gerencie o avanço, executores, prazos e bloqueios</p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setIsAddingTask(true)}
-                  className="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition shadow-2xs"
-                >
-                  <Plus size={14} />
-                  <span>Nova Subtarefa</span>
-                </button>
+                {canCreateTasks && !isAddingTask && (
+                  <button
+                    type="button"
+                    onClick={() => setIsAddingTask(true)}
+                    className="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition shadow-2xs"
+                  >
+                    <Plus size={14} />
+                    <span>Nova Subtarefa</span>
+                  </button>
+                )}
               </div>
 
               {/* FORMULÁRIO DE NOVA SUBTAREFA */}
-              {isAddingTask && (
+              {isAddingTask && canCreateTasks && (
                 <form onSubmit={handleCreateTaskSubmit} className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-3 shadow-2xs">
                   <div className="flex items-center justify-between pb-1 border-b border-slate-200/60">
                     <span className="font-bold text-slate-800 text-xs">Nova Subtarefa</span>
-                    <button type="button" onClick={() => setIsAddingTask(false)} className="text-slate-400 hover:text-slate-600 p-1">
+                    <button type="button" onClick={() => setIsAddingTask(false)} className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer">
                       <X size={14} />
                     </button>
                   </div>
@@ -768,7 +808,6 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
                     />
                   </div>
 
-                  {/* CAMPO DE DESCRIÇÃO DA ATIVIDADE */}
                   <div>
                     <label className="block text-[10px] text-slate-500 font-bold mb-1">Descrição do Serviço / Atividade a Realizar</label>
                     <textarea
@@ -779,6 +818,22 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
                       className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-medium resize-none"
                     />
                   </div>
+
+                  {canViewPrices && measurementType === 'por_subitem' && (
+                    <div>
+                      <label className="block text-[10px] text-slate-500 font-bold mb-1 flex items-center gap-1">
+                        <DollarSign size={11} className="text-emerald-600" />
+                        <span>Preço Unitário para Medição (R$)</span>
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="0,00"
+                        value={newTaskPrice}
+                        onChange={e => setNewTaskPrice(e.target.value)}
+                        className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-xl font-bold text-slate-900 text-right text-xs"
+                      />
+                    </div>
+                  )}
 
                   {/* BLOQUEAR AO CRIAR */}
                   <div className="flex items-center gap-2 mt-1 border-t border-slate-100 pt-2">
@@ -809,11 +864,11 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
                     </div>
                   )}
 
-                  {/* CAMPO DE SELEÇÃO MULTI-EXECUTORES */}
+                  {/* SELEÇÃO MULTI-EXECUTORES */}
                   <div>
                     <label className="block text-[10px] text-slate-500 font-bold mb-1 flex items-center gap-1 mt-2">
                       <Users size={12} className="text-sky-600" />
-                      <span>Membros / Executores Responsáveis (Múltiplos)</span>
+                      <span>Membros / Executores Responsáveis</span>
                     </label>
                     
                     {teamMembers.length > 0 ? (
@@ -824,12 +879,13 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
                             <button
                               type="button"
                               key={member.id}
+                              disabled={!canAssignExecutors}
                               onClick={() => toggleExecutorSelection(member.name)}
                               className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition flex items-center gap-1 cursor-pointer ${
                                 isSelected
                                   ? 'bg-sky-50 text-sky-700 border-sky-300 font-bold'
                                   : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
-                              }`}
+                              } ${!canAssignExecutors ? 'opacity-70 cursor-not-allowed' : ''}`}
                             >
                               <UserCheck size={12} className={isSelected ? 'text-sky-600' : 'text-slate-400'} />
                               <span>{member.name}</span>
@@ -840,7 +896,8 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
                     ) : (
                       <input
                         type="text"
-                        placeholder="Nomes dos executores separados por vírgula (Ex: João, Pedro)..."
+                        disabled={!canAssignExecutors}
+                        placeholder="Nomes dos executores separados por vírgula..."
                         value={newTaskExecutors.join(', ')}
                         onChange={e => setNewTaskExecutors(e.target.value.split(',').map(s => s.trim()).filter(Boolean))}
                         className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-medium"
@@ -852,6 +909,7 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
                     <label className="flex items-center gap-1.5 text-slate-700 font-medium cursor-pointer">
                       <input
                         type="radio"
+                        name="task_drawer_type_detail"
                         checked={!newTaskHasProgress}
                         onChange={() => setNewTaskHasProgress(false)}
                         className="text-sky-600"
@@ -861,6 +919,7 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
                     <label className="flex items-center gap-1.5 text-slate-700 font-medium cursor-pointer">
                       <input
                         type="radio"
+                        name="task_drawer_type_detail"
                         checked={newTaskHasProgress}
                         onChange={() => setNewTaskHasProgress(true)}
                         className="text-sky-600"
@@ -918,7 +977,7 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
                           <button
                             type="button"
                             onClick={() => { setNewTaskDependsOnId(''); setIsDepDropdownOpen(false); }}
-                            className="w-full text-left px-2 py-1 hover:bg-slate-50 rounded text-xs text-slate-500 font-semibold"
+                            className="w-full text-left px-2 py-1 hover:bg-slate-50 rounded text-xs text-slate-500 font-semibold cursor-pointer"
                           >
                             Sem dependência
                           </button>
@@ -927,7 +986,7 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
                               type="button"
                               key={opt.id}
                               onClick={() => { setNewTaskDependsOnId(opt.id); setIsDepDropdownOpen(false); }}
-                              className="w-full text-left px-2 py-1.5 hover:bg-sky-50 rounded text-xs font-semibold text-slate-800"
+                              className="w-full text-left px-2 py-1.5 hover:bg-sky-50 rounded text-xs font-semibold text-slate-800 cursor-pointer"
                             >
                               {opt.title}
                             </button>
@@ -941,13 +1000,13 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
                     <button
                       type="button"
                       onClick={() => setIsAddingTask(false)}
-                      className="px-3 py-1.5 text-slate-600 hover:bg-slate-200/60 rounded-xl font-semibold"
+                      className="px-3 py-1.5 text-slate-600 hover:bg-slate-200/60 rounded-xl font-semibold cursor-pointer"
                     >
                       Cancelar
                     </button>
                     <button
                       type="submit"
-                      className="px-4 py-1.5 bg-sky-600 text-white rounded-xl font-semibold shadow-2xs"
+                      className="px-4 py-1.5 bg-sky-600 text-white rounded-xl font-semibold shadow-2xs cursor-pointer hover:bg-sky-500"
                     >
                       Salvar Subtarefa
                     </button>
@@ -993,7 +1052,7 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex items-start gap-2.5 min-w-0 flex-1">
-                            {/* CHECKBOX: Abre modal de apontamento */}
+                            {/* CHECKBOX */}
                             <button
                               type="button"
                               disabled={isEffectiveBlocked || !canToggle}
@@ -1004,6 +1063,7 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
                               title={
                                 isTaskBlockedManual ? 'Tarefa bloqueada manualmente. Use o menu para desbloquear.'
                                 : isBlockedByDependency ? 'Bloqueado por dependência' 
+                                : !canToggle ? 'Sem permissão para alterar status'
                                 : isTaskDone ? 'Reabrir tarefa' 
                                 : 'Apontar / Concluir Tarefa'
                               }
@@ -1027,21 +1087,27 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
                                   {task.title}
                                 </span>
 
+                                {canViewPrices && measurementType === 'por_subitem' && task.unit_price > 0 && (
+                                  <span className="text-[9px] font-bold bg-emerald-50 border border-emerald-200 text-emerald-800 px-1.5 py-0.2 rounded font-mono">
+                                    {task.unit_price.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                                  </span>
+                                )}
+
                                 {!isEffectiveBlocked && dependencyTask && dependencyTask.status !== 'concluida' && (
                                   <button
                                     type="button"
+                                    disabled={!canManageItems}
                                     onClick={() => handleUnlinkTaskDependency(task)}
-                                    title="Clique para desvincular a dependência"
-                                    className="flex items-center gap-1 text-[10px] font-bold bg-amber-100/90 text-amber-800 px-2 py-0.5 rounded-full border border-amber-200 hover:bg-amber-200 transition"
+                                    title={canManageItems ? "Clique para desvincular a dependência" : "Dependência ativa"}
+                                    className={`flex items-center gap-1 text-[10px] font-bold bg-amber-100/90 text-amber-800 px-2 py-0.5 rounded-full border border-amber-200 ${canManageItems ? 'hover:bg-amber-200 cursor-pointer' : 'cursor-default'}`}
                                   >
                                     <Lock size={9} />
                                     <span>Aguardando: {dependencyTask.title}</span>
-                                    <Unlink size={10} className="ml-0.5 text-amber-700" />
+                                    {canManageItems && <Unlink size={10} className="ml-0.5 text-amber-700" />}
                                   </button>
                                 )}
                               </div>
 
-                              {/* Se bloqueada, exibe o aviso em vermelho */}
                               {isTaskBlockedManual && task.blocked_reason && (
                                 <div className="mt-1.5 mb-1 bg-rose-100 border border-rose-200 text-rose-800 p-2 rounded-lg text-[10px] flex items-start gap-1.5">
                                   <ShieldAlert size={12} className="shrink-0 mt-0.5 text-rose-600" />
@@ -1052,14 +1118,12 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
                                 </div>
                               )}
 
-                              {/* DESCRIÇÃO DA SUBTAREFA */}
                               {task.description && !isTaskBlockedManual && (
                                 <p className="text-[11px] text-slate-500 mt-1 leading-snug font-normal">
                                   {task.description}
                                 </p>
                               )}
 
-                              {/* LISTA DE EXECUTORES/MEMBROS QUE ATUARAM */}
                               {taskExecutors.length > 0 && !isTaskBlockedManual && (
                                 <div className="flex items-center gap-1.5 mt-2 flex-wrap">
                                   <span className="text-[10px] text-slate-400 font-bold flex items-center gap-1">
@@ -1098,7 +1162,7 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
                             <div className="relative">
                               <button
                                 type="button"
-                                disabled={isEffectiveBlocked && !isTaskBlockedManual} // Se for restrição manual ele precisa poder clicar pra desbloquear
+                                disabled={isEffectiveBlocked && !isTaskBlockedManual}
                                 onClick={() => setOpenTaskMenuId(openTaskMenuId === task.id ? null : task.id)}
                                 className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg cursor-pointer transition disabled:opacity-50"
                               >
@@ -1107,48 +1171,36 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
 
                               {openTaskMenuId === task.id && (
                                 <div className="absolute right-0 top-full mt-1 w-44 bg-white border border-slate-200 rounded-xl shadow-lg py-1 z-50 text-xs">
-                                  {isTaskBlockedManual ? (
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        setOpenTaskMenuId(null);
-                                        if (onUnblockTask) onUnblockTask(task);
-                                      }}
-                                      className="w-full text-left px-3.5 py-1.5 hover:bg-emerald-50 text-emerald-700 flex items-center gap-1.5 font-bold cursor-pointer"
-                                    >
-                                      <ShieldCheck size={13} />
-                                      <span>Desbloquear (Liberar)</span>
-                                    </button>
-                                  ) : (
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        setOpenTaskMenuId(null);
-                                        if (onOpenBlockTaskModal) onOpenBlockTaskModal(task, item.id);
-                                      }}
-                                      className="w-full text-left px-3.5 py-1.5 hover:bg-amber-50 text-amber-700 flex items-center gap-1.5 font-bold cursor-pointer"
-                                    >
-                                      <ShieldAlert size={13} />
-                                      <span>Bloquear (Restrição)</span>
-                                    </button>
-                                  )}
-
-                                  {!isTaskBlockedManual && (
-                                    <>
+                                  {canCompleteTasks && (
+                                    isTaskBlockedManual ? (
                                       <button
                                         type="button"
                                         onClick={() => {
                                           setOpenTaskMenuId(null);
-                                          // Como a gaveta não tem um modal próprio de Edição de Prazos completo como a linha, 
-                                          // pode emitir um evento pro parent tratar ou só ignorar/deletar dependendo das permissões
-                                          alert("Use o botão de configurações da tarefa na visualização EAP para gerenciar datas e dependências.");
+                                          if (onUnblockTask) onUnblockTask(task);
                                         }}
-                                        className="w-full text-left px-3.5 py-1.5 hover:bg-slate-50 text-slate-700 flex items-center gap-1.5 font-medium cursor-pointer"
+                                        className="w-full text-left px-3.5 py-1.5 hover:bg-emerald-50 text-emerald-700 flex items-center gap-1.5 font-bold cursor-pointer"
                                       >
-                                        <Sliders size={12} className="text-slate-400" />
-                                        <span>Opções Avançadas</span>
+                                        <ShieldCheck size={13} />
+                                        <span>Desbloquear (Liberar)</span>
                                       </button>
-                                      
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setOpenTaskMenuId(null);
+                                          if (onOpenBlockTaskModal) onOpenBlockTaskModal(task, item.id);
+                                        }}
+                                        className="w-full text-left px-3.5 py-1.5 hover:bg-amber-50 text-amber-700 flex items-center gap-1.5 font-bold cursor-pointer"
+                                      >
+                                        <ShieldAlert size={13} />
+                                        <span>Bloquear (Restrição)</span>
+                                      </button>
+                                    )
+                                  )}
+
+                                  {canDeleteItems && !isTaskBlockedManual && (
+                                    <>
                                       <div className="border-t border-slate-100 my-1" />
                                       <button
                                         type="button"
@@ -1216,13 +1268,16 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
                             {file.name}
                           </span>
                         </div>
-                        <button
-                          onClick={() => handleDeleteAttachment(file.id)}
-                          className="text-slate-400 hover:text-rose-600 p-1 opacity-0 group-hover:opacity-100 transition cursor-pointer"
-                          title="Remover anexo"
-                        >
-                          <Trash2 size={13} />
-                        </button>
+                        {canDeleteItems && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteAttachment(file.id)}
+                            className="text-slate-400 hover:text-rose-600 p-1 opacity-0 group-hover:opacity-100 transition cursor-pointer"
+                            title="Remover anexo"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        )}
                       </div>
 
                       {file.type === 'image' && (
@@ -1257,10 +1312,11 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
                 <label className="block font-semibold text-slate-600 mb-1">Descrição Técnica / Especificações</label>
                 <textarea
                   rows={4}
+                  disabled={!canManageItems}
                   value={description}
                   onChange={e => setDescription(e.target.value)}
                   placeholder="Informe características técnicas, voltagem, fabricante, dimensões ou observações essenciais..."
-                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-2xl text-slate-800 focus:ring-2 focus:ring-sky-500 resize-none text-xs"
+                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-2xl text-slate-800 focus:ring-2 focus:ring-sky-500 resize-none text-xs disabled:opacity-75"
                 />
               </div>
 
@@ -1268,10 +1324,11 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
                 <label className="block font-semibold text-slate-600 mb-1">Apontamentos & Ocorrências de Campo</label>
                 <textarea
                   rows={5}
+                  disabled={!canManageItems}
                   value={notes}
                   onChange={e => setNotes(e.target.value)}
                   placeholder="Registe ocorrências, problemas climáticos, paralisações ou inspeções técnicas deste equipamento..."
-                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-2xl text-slate-800 focus:ring-2 focus:ring-sky-500 resize-none text-xs"
+                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-2xl text-slate-800 focus:ring-2 focus:ring-sky-500 resize-none text-xs disabled:opacity-75"
                 />
               </div>
             </div>
@@ -1281,7 +1338,7 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
       </div>
 
       {/* MODAL: APONTAMENTO DIÁRIO DE EXECUÇÃO */}
-      {completingTask && (
+      {completingTask && canCompleteTasks && (
         <div className="fixed inset-0 z-[170] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs animate-in fade-in duration-150">
           <div className="bg-white border border-slate-200 rounded-3xl w-full max-w-md p-5 sm:p-6 shadow-2xl space-y-4 animate-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
@@ -1294,8 +1351,9 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
                   <p className="text-[11px] text-slate-500">Registro no diário de obra</p>
                 </div>
               </div>
-              <button
-                onClick={() => setCompletingTask(null)}
+              <button 
+                type="button" 
+                onClick={() => setCompletingTask(null)} 
                 className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer"
               >
                 <X size={18} />
@@ -1307,9 +1365,7 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
                 <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block mb-1">
                   Atividade Executada
                 </span>
-                <p className="font-semibold text-slate-800 text-sm">
-                  {completingTask.title}
-                </p>
+                <p className="font-semibold text-slate-800 text-sm">{completingTask.title}</p>
                 {completingTask.has_progress_tracking && (
                   <div className="mt-2 flex items-center gap-2 text-[11px] font-medium text-slate-500">
                     <span className="bg-white px-2 py-1 rounded border border-slate-200 shadow-sm">
@@ -1323,7 +1379,6 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
               </div>
 
               <div className="grid grid-cols-2 gap-3">
-                {/* DATA DO APONTAMENTO */}
                 <div>
                   <label className="block text-[10px] font-bold text-slate-500 mb-1">Data do Serviço</label>
                   <input
@@ -1335,7 +1390,6 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
                   />
                 </div>
 
-                {/* QUANTIDADE FEITA NO DIA */}
                 {completingTask.has_progress_tracking ? (
                   <div>
                     <label className="block text-[10px] font-bold text-slate-500 mb-1">Qtd. feita HOJE ({completingTask.unit})</label>
@@ -1356,7 +1410,7 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
                         type="button"
                         onClick={() => { setChecklistAction('progress'); setEntryQty('0'); }}
                         className={`flex-1 text-xs font-semibold py-1.5 rounded-lg transition-all cursor-pointer ${
-                          checklistAction === 'progress' ? 'bg-white shadow-sm text-sky-700' : 'text-slate-500 hover:text-slate-700'
+                          checklistAction === 'progress' ? 'bg-white shadow-sm text-sky-700 font-bold' : 'text-slate-500 hover:text-slate-700'
                         }`}
                       >
                         Apenas Apontar
@@ -1365,7 +1419,7 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
                         type="button"
                         onClick={() => { setChecklistAction('complete'); setEntryQty('1'); }}
                         className={`flex-1 text-xs font-semibold py-1.5 rounded-lg transition-all cursor-pointer ${
-                          checklistAction === 'complete' ? 'bg-white shadow-sm text-emerald-700' : 'text-slate-500 hover:text-slate-700'
+                          checklistAction === 'complete' ? 'bg-white shadow-sm text-emerald-700 font-bold' : 'text-slate-500 hover:text-slate-700'
                         }`}
                       >
                         Concluir
@@ -1375,7 +1429,7 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
                 )}
               </div>
 
-              {/* FILTRO DE EQUIPE E SELEÇÃO DE EXECUTORES */}
+              {/* SELEÇÃO DE EXECUTORES */}
               <div className="pt-2">
                 <div className="flex items-center justify-between mb-2">
                   <label className="block text-[10px] font-bold text-slate-500">Membros da Equipe / Executores</label>
@@ -1430,14 +1484,11 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
                       );
                     })
                   ) : (
-                    <div className="p-3 text-center text-slate-400 italic">
-                      Nenhum membro encontrado.
-                    </div>
+                    <div className="p-3 text-center text-slate-400 italic">Nenhum membro encontrado.</div>
                   )}
                 </div>
               </div>
 
-              {/* OBSERVAÇÕES */}
               <div>
                 <label className="block text-[10px] font-bold text-slate-500 mb-1">Observações do dia (Opcional)</label>
                 <input
@@ -1445,10 +1496,9 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
                   value={entryNotes}
                   onChange={(e) => setEntryNotes(e.target.value)}
                   placeholder="Houve algum problema ou detalhe na execução hoje?"
-                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl font-medium text-slate-800 focus:ring-2 focus:ring-sky-500"
+                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl font-medium text-slate-800 focus:ring-2 focus:ring-sky-500 text-xs"
                 />
               </div>
-
             </div>
 
             <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2">
@@ -1475,3 +1525,5 @@ export const WorkItemDetailDrawer: React.FC<WorkItemDetailDrawerProps> = ({
     </div>
   );
 };
+
+export default WorkItemDetailDrawer;

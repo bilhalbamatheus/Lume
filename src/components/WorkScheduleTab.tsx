@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissions } from '../hooks/usePermissions';
+import { WorkSchedulePrintModal } from './WorkSchedulePrintModal';
 import {
   ChevronLeft,
   ChevronRight,
@@ -10,9 +11,6 @@ import {
   AlertTriangle,
   CheckCircle2,
   Lock,
-  Layers,
-  CheckSquare,
-  Square,
   Loader2,
   CalendarRange,
   X,
@@ -21,15 +19,18 @@ import {
   Filter,
   Trash2,
   Link2,
-  ChevronDown,
-  ChevronRight as ChevronRightIcon,
-  ChevronsDown,
-  ChevronsUp,
   UserCheck,
   PlayCircle,
   ShieldAlert,
   ShieldCheck,
-} from 'lucide-react';
+  Printer,
+  CalendarCheck2,
+  Zap,
+  ListOrdered,
+  Kanban,
+  ArrowUpDown,
+  Check,
+  Minus} from 'lucide-react';
 
 interface WorkTask {
   id: string;
@@ -60,8 +61,6 @@ interface WorkItem {
   start_date?: string | null;
   due_date?: string | null;
   depends_on_item_id?: string | null;
-  tasks?: WorkTask[];
-  children?: WorkItem[];
 }
 
 interface TeamMember {
@@ -78,17 +77,6 @@ interface SettingOption {
   color?: string;
 }
 
-export interface DailyEntryPayload {
-  taskId: string;
-  itemId: string;
-  date: string;
-  quantity: number;
-  teamId: string | null;
-  executors: string[];
-  notes: string;
-  isChecklistComplete: boolean;
-}
-
 interface WorkScheduleTabProps {
   workId: string;
   workTitle?: string;
@@ -96,32 +84,42 @@ interface WorkScheduleTabProps {
 }
 
 type ZoomLevel = 'days' | 'weeks' | 'months';
+type SortOption = 'due_date' | 'title' | 'status' | 'hierarchy';
 
 export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({ 
-  workId, 
+  workId,
+  workTitle = 'Obra',
+  workCode
 }) => {
   const { user } = useAuth();
   const { permissions, loading: loadingPerms } = usePermissions();
 
+
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<WorkItem[]>([]);
   const [tasks, setTasks] = useState<WorkTask[]>([]);
-  
-  // Colaboradores alocados na obra (work_members)
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+
+  // Dados da obra para validação de Técnico/Comercial
+  const [, setWorkData] = useState<{ assigned_to?: string | null; commercial_owner_id?: string | null } | null>(null);
 
   // Configurações dos Filtros
   const [itemTypeOptions, setItemTypeOptions] = useState<SettingOption[]>([]);
   const [subitemTypeOptions, setSubitemTypeOptions] = useState<SettingOption[]>([]);
   const [locationOptions, setLocationOptions] = useState<SettingOption[]>([]);
 
+  // Modos de Visualização & Ordenação
+  const [viewMode, setViewMode] = useState<'gantt' | 'list'>('gantt');
+  const [sortBy, setSortBy] = useState<SortOption>('due_date');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
+
+  // Filtro Rápido: Mostrar Somente com Prazos Agendados
+  const [onlyScheduled, setOnlyScheduled] = useState(false);
+
   const [zoomLevel, setZoomLevel] = useState<ZoomLevel>('weeks');
   const [baseDate, setBaseDate] = useState<Date>(new Date());
 
-  // Iniciar recolhido por padrão (Set vazio)
-  const [expandedItemIds, setExpandedItemIds] = useState<Set<string>>(new Set());
-
-  // Pesquisa e Filtros
+  // Busca e Filtros
   const [searchTerm, setSearchTerm] = useState('');
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [filterButtonCoords, setFilterButtonCoords] = useState<{ top: number; left: number } | null>(null);
@@ -134,6 +132,22 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
 
   const filterButtonRef = useRef<HTMLButtonElement>(null);
   const filterPopoverRef = useRef<HTMLDivElement>(null);
+
+  // Modal de Impressão
+  const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
+
+  // Modal de Agendamento em Massa (Painel Duplo)
+  const [isBatchScheduleOpen, setIsBatchScheduleOpen] = useState(false);
+  const [batchStartDate, setBatchStartDate] = useState(new Date().toISOString().split('T')[0]);
+  const [batchDueDate, setBatchDueDate] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 14);
+    return d.toISOString().split('T')[0];
+  });
+  const [batchSelectedTaskIds, setBatchSelectedTaskIds] = useState<Set<string>>(new Set());
+  const [batchSearchTerm, setBatchSearchTerm] = useState('');
+  const [batchFilterItemId, setBatchFilterItemId] = useState<string>('all');
+  const [savingBatch, setSavingBatch] = useState(false);
 
   // Popup de Ações Rápidas
   const [actionTarget, setActionTarget] = useState<{
@@ -150,7 +164,7 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
     taskRef?: WorkTask;
   } | null>(null);
 
-  // Modais de Prazos / Dependência
+  // Modais de Prazos e Dependência
   const [isDatesModalOpen, setIsDatesModalOpen] = useState(false);
   const [quickStartDate, setQuickStartDate] = useState('');
   const [quickDueDate, setQuickDueDate] = useState('');
@@ -160,7 +174,7 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
   const [selectedDependencyId, setSelectedDependencyId] = useState('');
   const [savingDependency, setSavingDependency] = useState(false);
 
-  // Estados de Apontamento Diário
+  // Apontamento Diário
   const [completingTask, setCompletingTask] = useState<{ item: WorkItem; task: WorkTask } | null>(null);
   const [entryDate, setEntryDate] = useState(new Date().toISOString().split('T')[0]);
   const [entryQty, setEntryQty] = useState('');
@@ -169,12 +183,60 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
   const [isSavingEntry, setIsSavingEntry] = useState(false);
   const [checklistAction, setChecklistAction] = useState<'progress' | 'complete'>('complete');
 
-  // Modal de Bloqueio de Tarefa
+  // Bloqueio de Tarefa
   const [blockingTask, setBlockingTask] = useState<WorkTask | null>(null);
   const [blockReason, setBlockReason] = useState('');
   const [isBlocking, setIsBlocking] = useState(false);
 
-  // Fecha o popover de filtros ao clicar fora
+  // Permissões
+  const canViewSchedule = Boolean(
+    permissions.isOwnerOrAdmin ||
+    permissions.canManageSchedule ||
+    permissions.canViewSchedule
+  );
+
+  const canEditSchedule = Boolean(
+    permissions.isOwnerOrAdmin ||
+    permissions.canManageSchedule ||
+    permissions.canEditSchedule
+  );
+
+  const canCompleteTasks = Boolean(
+    permissions.isOwnerOrAdmin ||
+    permissions.canExecuteWorkTasks ||
+    permissions.canCompleteWorkTasks
+  );
+
+  const canReopenTasks = Boolean(
+    permissions.isOwnerOrAdmin ||
+    permissions.canReopenWorkTasks
+  );
+
+  // Carrega responsáveis da obra
+  useEffect(() => {
+    const fetchWorkResponsibles = async () => {
+      try {
+        const { data } = await supabase
+          .from('works')
+          .select('assigned_to, opportunity:opportunities!opportunity_id(assigned_to)')
+          .eq('id', workId)
+          .maybeSingle();
+
+        if (data) {
+          const opp = Array.isArray(data.opportunity) ? data.opportunity[0] : data.opportunity;
+          setWorkData({
+            assigned_to: data.assigned_to || null,
+            commercial_owner_id: opp?.assigned_to || null
+          });
+        }
+      } catch (err) {
+        console.warn('Erro ao carregar responsáveis da obra:', err);
+      }
+    };
+
+    if (workId) fetchWorkResponsibles();
+  }, [workId]);
+
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       const target = e.target as Node;
@@ -214,11 +276,7 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
 
       if (itemsErr) throw itemsErr;
 
-      const sortedItems = (itemsData || []).sort((a: WorkItem, b: WorkItem) =>
-        (a.title || '').localeCompare(b.title || '', 'pt-BR', { numeric: true, sensitivity: 'base' })
-      );
-
-      const itemIds = sortedItems.map(i => i.id);
+      const itemIds = (itemsData || []).map(i => i.id);
       let tasksData: WorkTask[] = [];
 
       if (itemIds.length > 0) {
@@ -229,17 +287,13 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
 
         if (tasksErr) throw tasksErr;
 
-        tasksData = (tData || [])
-          .map((t: any) => ({
-            ...t,
-            executed_by: Array.isArray(t.executed_by) ? t.executed_by : []
-          }))
-          .sort((a: WorkTask, b: WorkTask) =>
-            (a.title || '').localeCompare(b.title || '', 'pt-BR', { numeric: true, sensitivity: 'base' })
-          );
+        tasksData = (tData || []).map((t: any) => ({
+          ...t,
+          executed_by: Array.isArray(t.executed_by) ? t.executed_by : []
+        }));
       }
 
-      setItems(sortedItems);
+      setItems(itemsData || []);
       setTasks(tasksData);
     } catch (err) {
       console.error('Erro ao carregar dados do cronograma:', err);
@@ -337,11 +391,11 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
   }, [user?.company?.id, workId]);
 
   useEffect(() => {
-    if (permissions.canViewSchedule) {
+    if (canViewSchedule) {
       loadScheduleData();
       loadFilterSettings();
     }
-  }, [loadScheduleData, loadFilterSettings, permissions.canViewSchedule]);
+  }, [loadScheduleData, loadFilterSettings, canViewSchedule]);
 
   const itemsMap = useMemo(() => {
     const map = new Map<string, WorkItem>();
@@ -369,23 +423,6 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
     return parts.join(' / ');
   }, [itemsMap]);
 
-  const toggleItemExpansion = (itemId: string) => {
-    setExpandedItemIds(prev => {
-      const next = new Set(prev);
-      if (next.has(itemId)) next.delete(itemId);
-      else next.add(itemId);
-      return next;
-    });
-  };
-
-  const handleToggleExpandAll = () => {
-    if (expandedItemIds.size === items.length) {
-      setExpandedItemIds(new Set());
-    } else {
-      setExpandedItemIds(new Set(items.map(i => i.id)));
-    }
-  };
-
   const { timelineStart, timelineEnd, timeColumns } = useMemo(() => {
     const start = new Date(baseDate);
     const end = new Date(baseDate);
@@ -406,37 +443,44 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
     start.setHours(0, 0, 0, 0);
     end.setHours(23, 59, 59, 999);
 
-    const cols: Array<{ label: string; subLabel: string; date: Date; isToday: boolean }> = [];
+    const cols: Array<{ label: string; subLabel: string; date: Date; isToday: boolean; endDate: Date }> = [];
     const curr = new Date(start);
     const now = new Date();
 
     while (curr <= end) {
       if (zoomLevel === 'days') {
         const isToday = curr.toDateString() === now.toDateString();
+        const dayEnd = new Date(curr);
+        dayEnd.setHours(23, 59, 59);
         cols.push({
           label: curr.toLocaleDateString('pt-BR', { weekday: 'short' }),
           subLabel: `${curr.getDate()}/${curr.getMonth() + 1}`,
           date: new Date(curr),
+          endDate: dayEnd,
           isToday
         });
         curr.setDate(curr.getDate() + 1);
       } else if (zoomLevel === 'weeks') {
         const weekEnd = new Date(curr);
         weekEnd.setDate(weekEnd.getDate() + 6);
+        weekEnd.setHours(23, 59, 59);
         const isCurrent = now >= curr && now <= weekEnd;
         cols.push({
           label: `SEM ${Math.ceil(curr.getDate() / 7)}`,
           subLabel: `${curr.getDate()}/${curr.getMonth() + 1} - ${weekEnd.getDate()}/${weekEnd.getMonth() + 1}`,
           date: new Date(curr),
+          endDate: weekEnd,
           isToday: isCurrent
         });
         curr.setDate(curr.getDate() + 7);
       } else {
+        const monthEnd = new Date(curr.getFullYear(), curr.getMonth() + 1, 0, 23, 59, 59);
         const isCurrentMonth = curr.getMonth() === now.getMonth() && curr.getFullYear() === now.getFullYear();
         cols.push({
           label: curr.toLocaleDateString('pt-BR', { month: 'short' }).toUpperCase(),
           subLabel: `${curr.getFullYear()}`,
           date: new Date(curr),
+          endDate: monthEnd,
           isToday: isCurrentMonth
         });
         curr.setMonth(curr.getMonth() + 1);
@@ -463,32 +507,23 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
     let delayed = 0;
     let inProgress = 0;
     let unassigned = 0;
+    let scheduledCount = 0;
 
     tasks.forEach(t => {
       const isDone = t.status === 'concluida';
       const isLate = !isDone && t.due_date && t.due_date < nowStr;
+      const hasDate = Boolean(t.start_date || t.due_date);
+
+      if (hasDate) scheduledCount += 1;
 
       if (isDone) completed += 1;
       else if (isLate) delayed += 1;
-      else if (!t.due_date && !t.start_date) unassigned += 1;
+      else if (!hasDate) unassigned += 1;
       else inProgress += 1;
     });
 
-    return { total: tasks.length, completed, delayed, inProgress, unassigned };
+    return { total: tasks.length, completed, delayed, inProgress, unassigned, scheduledCount };
   }, [tasks]);
-
-  const getItemEffectiveDates = (item: WorkItem) => {
-    if (item.start_date || item.due_date) return { start: item.start_date, due: item.due_date };
-    const itemTasks = tasks.filter(t => t.work_item_id === item.id && (t.start_date || t.due_date));
-    if (itemTasks.length === 0) return { start: null, due: null };
-
-    const starts = itemTasks.map(t => t.start_date || t.due_date).filter(Boolean) as string[];
-    const dues = itemTasks.map(t => t.due_date || t.start_date).filter(Boolean) as string[];
-    starts.sort();
-    dues.sort();
-
-    return { start: starts[0] || null, due: dues[dues.length - 1] || null };
-  };
 
   const getBarCoordinates = (startStr?: string | null, dueStr?: string | null) => {
     if (!startStr && !dueStr) return null;
@@ -512,73 +547,138 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
     return `${((now.getTime() - timelineStart.getTime()) / totalDuration) * 100}%`;
   }, [timelineStart, timelineEnd]);
 
-  const scheduleTree = useMemo(() => {
+  // Lista de Tarefas Filtradas e Ordenadas
+  const sortedTasksList = useMemo(() => {
     const q = searchTerm.toLowerCase().trim();
     const nowStr = new Date().toISOString().split('T')[0];
 
-    const itemsWithTasks: (WorkItem & { filteredTasks: WorkTask[] })[] = items.map(item => {
-      const itemTasks = tasks.filter(t => t.work_item_id === item.id);
+    const filtered = tasks.filter(task => {
+      if (onlyScheduled && !task.start_date && !task.due_date) return false;
 
-      const filteredTasks = itemTasks.filter(t => {
-        if (filterSubitemType !== 'all' && t.task_type !== filterSubitemType) return false;
-        if (filterExecutor !== 'all' && (!t.executed_by || !t.executed_by.includes(filterExecutor))) return false;
+      const parentItem = itemsMap.get(task.work_item_id);
+      const breadcrumb = getHierarchyBreadcrumb(task.work_item_id);
 
-        const matchesSearch = q === '' || t.title.toLowerCase().includes(q) || (t.task_type && t.task_type.toLowerCase().includes(q));
+      if (filterSubitemType !== 'all' && task.task_type !== filterSubitemType) return false;
+      if (filterItemType !== 'all' && parentItem?.item_type !== filterItemType) return false;
+      if (filterLocation !== 'all' && parentItem?.location !== filterLocation) return false;
+      if (filterExecutor !== 'all' && (!task.executed_by || !task.executed_by.includes(filterExecutor))) return false;
 
-        let matchesStatus = true;
-        const isDone = t.status === 'concluida';
-        const isBlocked = t.status === 'bloqueada';
-        const isLate = Boolean(!isDone && t.due_date && t.due_date < nowStr);
-        const isUnassigned = Boolean(!t.due_date && !t.start_date);
+      const matchesSearch =
+        q === '' ||
+        task.title.toLowerCase().includes(q) ||
+        breadcrumb.toLowerCase().includes(q) ||
+        (task.task_type && task.task_type.toLowerCase().includes(q));
 
-        if (filterStatus === 'concluida') matchesStatus = isDone;
-        else if (filterStatus === 'em_andamento') matchesStatus = (!isDone && !isBlocked && !isLate && !isUnassigned);
-        else if (filterStatus === 'atrasadas') matchesStatus = isLate;
-        else if (filterStatus === 'sem_prazo') matchesStatus = isUnassigned;
-        else if (filterStatus === 'bloqueada') matchesStatus = isBlocked;
+      if (!matchesSearch) return false;
 
-        return matchesSearch && matchesStatus;
-      });
+      const isDone = task.status === 'concluida';
+      const isBlocked = task.status === 'bloqueada';
+      const isLate = Boolean(!isDone && task.due_date && task.due_date < nowStr);
+      const isUnassigned = Boolean(!task.due_date && !task.start_date);
 
-      return {
-        ...item,
-        filteredTasks: filterStatus === 'all' && filterSubitemType === 'all' && filterExecutor === 'all' && q === '' ? itemTasks : filteredTasks
-      };
+      if (filterStatus === 'concluida') return isDone;
+      if (filterStatus === 'em_andamento') return !isDone && !isBlocked && !isLate && !isUnassigned;
+      if (filterStatus === 'atrasadas') return isLate;
+      if (filterStatus === 'sem_prazo') return isUnassigned;
+      if (filterStatus === 'bloqueada') return isBlocked;
+
+      return true;
     });
 
-    const buildNode = (parentId: string | null = null): any[] => {
-      return itemsWithTasks
-        .filter(item => (item.parent_id || null) === parentId)
-        .map(item => {
-          const children = buildNode(item.id);
-          const matchesItemSearch = q === '' || item.title.toLowerCase().includes(q) || (item.code && item.code.toLowerCase().includes(q));
-          const matchesType = filterItemType === 'all' || item.item_type === filterItemType;
-          const matchesLoc = filterLocation === 'all' || item.location === filterLocation;
+    return filtered.sort((a, b) => {
+      let res = 0;
+      if (sortBy === 'due_date') {
+        const da = a.due_date || '9999-99-99';
+        const db = b.due_date || '9999-99-99';
+        res = da.localeCompare(db);
+      } else if (sortBy === 'title') {
+        res = a.title.localeCompare(b.title, 'pt-BR');
+      } else if (sortBy === 'status') {
+        res = a.status.localeCompare(b.status);
+      } else if (sortBy === 'hierarchy') {
+        const ha = getHierarchyBreadcrumb(a.work_item_id);
+        const hb = getHierarchyBreadcrumb(b.work_item_id);
+        res = ha.localeCompare(hb, 'pt-BR', { numeric: true });
+      }
+      return sortOrder === 'asc' ? res : -res;
+    });
+  }, [tasks, itemsMap, searchTerm, onlyScheduled, filterSubitemType, filterItemType, filterLocation, filterExecutor, filterStatus, sortBy, sortOrder, getHierarchyBreadcrumb]);
 
-          const hasMatchingTasks = item.filteredTasks.length > 0;
-          const hasMatchingChildren = children.length > 0;
+  const handleDirectScheduleCell = async (task: WorkTask, col: { date: Date; endDate: Date }) => {
+    if (!canEditSchedule) return;
 
-          if ((matchesItemSearch && matchesType && matchesLoc) || hasMatchingTasks || hasMatchingChildren) {
-            return { ...item, children };
-          }
-          return null;
+    const sStr = col.date.toISOString().split('T')[0];
+    const dStr = col.endDate.toISOString().split('T')[0];
+
+    try {
+      const { error } = await supabase
+        .from('work_tasks')
+        .update({
+          start_date: sStr,
+          due_date: dStr
         })
-        .filter(Boolean);
-    };
+        .eq('id', task.id);
 
-    return buildNode(null);
-  }, [items, tasks, searchTerm, filterStatus, filterItemType, filterSubitemType, filterLocation, filterExecutor]);
+      if (error) throw error;
 
-  const activeFiltersCount = 
-    (filterStatus !== 'all' ? 1 : 0) + 
-    (filterItemType !== 'all' ? 1 : 0) + 
-    (filterSubitemType !== 'all' ? 1 : 0) +
-    (filterLocation !== 'all' ? 1 : 0) +
-    (filterExecutor !== 'all' ? 1 : 0);
+      setTasks(prev =>
+        prev.map(t => (t.id === task.id ? { ...t, start_date: sStr, due_date: dStr } : t))
+      );
+    } catch (err: any) {
+      alert('Erro ao agendar na grade: ' + err.message);
+    }
+  };
+
+  const batchFilteredTasks = useMemo(() => {
+    const q = batchSearchTerm.toLowerCase().trim();
+    return tasks.filter(t => {
+      if (batchFilterItemId !== 'all' && t.work_item_id !== batchFilterItemId) return false;
+      if (q === '') return true;
+      const b = getHierarchyBreadcrumb(t.work_item_id);
+      return t.title.toLowerCase().includes(q) || b.toLowerCase().includes(q);
+    });
+  }, [tasks, batchSearchTerm, batchFilterItemId, getHierarchyBreadcrumb]);
+
+  const handleApplyBatchSchedule = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canEditSchedule || batchSelectedTaskIds.size === 0) return;
+
+    try {
+      setSavingBatch(true);
+      const taskIdsArray = Array.from(batchSelectedTaskIds);
+
+      const { error } = await supabase
+        .from('work_tasks')
+        .update({
+          start_date: batchStartDate || null,
+          due_date: batchDueDate || null
+        })
+        .in('id', taskIdsArray);
+
+      if (error) throw error;
+
+      setIsBatchScheduleOpen(false);
+      setBatchSelectedTaskIds(new Set());
+      await loadScheduleData();
+    } catch (err: any) {
+      alert('Erro ao agendar tarefas em lote: ' + err.message);
+    } finally {
+      setSavingBatch(false);
+    }
+  };
+
+  const handleToggleBatchTask = (taskId: string) => {
+    setBatchSelectedTaskIds(prev => {
+      const next = new Set(prev);
+      if (next.has(taskId)) next.delete(taskId);
+      else next.add(taskId);
+      return next;
+    });
+  };
 
   const handleSaveQuickDates = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!actionTarget || !permissions.canEditSchedule) return;
+    if (!actionTarget || !canEditSchedule) return;
 
     try {
       setSavingQuickDates(true);
@@ -602,7 +702,7 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
 
   const handleSaveDependency = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!actionTarget || !permissions.canEditSchedule) return;
+    if (!actionTarget || !canEditSchedule) return;
 
     try {
       setSavingDependency(true);
@@ -671,8 +771,8 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
 
     const isDone = task.status === 'concluida';
     if (isDone) {
-      if (!permissions.canReopenWorkTasks) {
-        alert('Seu perfil não possui permissão para reabrir tarefas.');
+      if (!canReopenTasks) {
+        alert('O seu perfil não possui permissão para reabrir tarefas concluídas.');
         return;
       }
       try {
@@ -683,7 +783,10 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
         console.error(err);
       }
     } else {
-      if (!permissions.canCompleteWorkTasks) return;
+      if (!canCompleteTasks) {
+        alert('O seu perfil não possui permissão para dar baixa em tarefas.');
+        return;
+      }
       
       setCompletingTask({ item, task });
       setSelectedExecutors(task.executed_by || []);
@@ -701,7 +804,7 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
   };
 
   const handleConfirmTaskCompletion = async () => {
-    if (!completingTask || !permissions.canCompleteWorkTasks) return;
+    if (!completingTask || !canCompleteTasks) return;
     try {
       setIsSavingEntry(true);
       const companyId = user?.company?.id;
@@ -741,11 +844,11 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
   };
 
   const toggleExecutor = (memberName: string) => {
-    if (!permissions.canAssignExecutors) return;
+    if (!canCompleteTasks) return;
     setSelectedExecutors(prev => prev.includes(memberName) ? prev.filter(m => m !== memberName) : [...prev, memberName]);
   };
 
-  if (!loadingPerms && !permissions.canViewSchedule) {
+  if (!loadingPerms && !canViewSchedule) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center p-12 text-center bg-slate-50/50 rounded-2xl border border-slate-200">
         <div className="w-12 h-12 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-400 mb-3 border border-slate-200">
@@ -753,271 +856,16 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
         </div>
         <h4 className="font-bold text-slate-800 text-sm mb-1">Acesso Restrito ao Cronograma</h4>
         <p className="text-xs text-slate-500 max-w-sm">
-          Seu perfil de acesso atual não possui permissão para visualizar o cronograma operacional desta obra.
+          O seu perfil de acesso não possui permissão para visualizar o cronograma operacional desta obra.
         </p>
       </div>
     );
   }
 
-  const renderScheduleTree = (node: any, depth = 0): React.ReactNode => {
-    const isExpanded = expandedItemIds.has(node.id);
-    const hasChildren = (node.children && node.children.length > 0) || (node.filteredTasks && node.filteredTasks.length > 0);
-    const itemTasks: WorkTask[] = node.filteredTasks || [];
-    const doneTasks = itemTasks.filter(t => t.status === 'concluida').length;
-    const itemProgress = itemTasks.length > 0 ? Math.round((doneTasks / itemTasks.length) * 100) : node.progress_percent || 0;
-    const effectiveDates = getItemEffectiveDates(node);
-    const itemBar = getBarCoordinates(effectiveDates.start, effectiveDates.due);
-
-    const depItem = node.depends_on_item_id ? itemsMap.get(node.depends_on_item_id) : null;
-    const isItemBlocked = depItem ? (depItem.progress_percent || 0) < 100 : false;
-
-    return (
-      <React.Fragment key={node.id}>
-        {/* LINHA DO ITEM / COMPONENTE MACRO (h-11 = 44px) */}
-        <div className={`flex items-center hover:bg-slate-50/70 transition border-b border-slate-200/60 ${depth === 0 ? 'bg-slate-50/50 font-bold' : 'bg-white'}`}>
-          <div
-            style={{ paddingLeft: `${16 + depth * 20}px` }}
-            className="w-72 sm:w-80 h-11 p-2 pr-4 border-r border-slate-200 shrink-0 flex items-center justify-between gap-2 min-w-0"
-          >
-            <div className="flex items-center gap-1.5 min-w-0">
-              {hasChildren ? (
-                <button
-                  type="button"
-                  onClick={() => toggleItemExpansion(node.id)}
-                  className="p-1 hover:bg-slate-200/70 text-slate-500 rounded-lg transition cursor-pointer shrink-0"
-                >
-                  {isExpanded ? <ChevronDown size={15} /> : <ChevronRightIcon size={15} />}
-                </button>
-              ) : (
-                <span className="w-5 shrink-0" />
-              )}
-
-              <div
-                onClick={() => {
-                  if (!permissions.canEditSchedule) return;
-                  setActionTarget({
-                    id: node.id,
-                    title: node.title,
-                    type: 'item',
-                    start: effectiveDates.start,
-                    due: effectiveDates.due,
-                    dependsOnId: node.depends_on_item_id,
-                    isBlocked: isItemBlocked,
-                    dependencyTitle: depItem?.title,
-                    itemRef: node
-                  });
-                }}
-                className={`flex items-center gap-2 min-w-0 group/title truncate ${permissions.canEditSchedule ? 'cursor-pointer' : 'cursor-default'}`}
-              >
-                {isItemBlocked ? (
-                  <Lock size={14} className="text-amber-500 shrink-0" />
-                ) : (
-                  <Layers size={14} className="text-sky-600 shrink-0 group-hover/title:scale-110 transition-transform" />
-                )}
-                <span className={`text-xs truncate ${isItemBlocked ? 'text-amber-900 font-bold' : 'text-slate-900 group-hover/title:text-sky-700'}`}>
-                  {node.title}
-                </span>
-                {node.code && (
-                  <span className="font-mono text-[9px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-bold border shrink-0">
-                    {node.code}
-                  </span>
-                )}
-              </div>
-            </div>
-
-            <div className="flex items-center gap-1 shrink-0">
-              <span className="text-[10px] font-bold text-slate-600 bg-white px-2 py-0.5 rounded-md border border-slate-200">
-                {itemProgress}%
-              </span>
-            </div>
-          </div>
-
-          <div
-            onClick={() => {
-              if (!permissions.canEditSchedule) return;
-              setActionTarget({
-                id: node.id,
-                title: node.title,
-                type: 'item',
-                start: effectiveDates.start,
-                due: effectiveDates.due,
-                dependsOnId: node.depends_on_item_id,
-                isBlocked: isItemBlocked,
-                dependencyTitle: depItem?.title,
-                itemRef: node
-              });
-            }}
-            className={`flex-1 h-11 relative flex items-center overflow-hidden ${permissions.canEditSchedule ? 'cursor-pointer' : 'cursor-default'}`}
-          >
-            <div className="absolute inset-0 flex pointer-events-none">
-              {timeColumns.map((col, idx) => (
-                <div key={idx} className={`flex-1 min-w-[65px] border-r border-slate-100 last:border-r-0 h-full ${col.isToday ? 'bg-sky-50/30' : ''}`} />
-              ))}
-            </div>
-
-            {todayPosition && (
-              <div className="absolute top-0 bottom-0 w-0.5 bg-rose-500 z-20 pointer-events-none" style={{ left: todayPosition }} />
-            )}
-
-            {itemBar && (
-              <div
-                className={`absolute h-6 rounded-lg shadow-2xs flex items-center px-2.5 z-10 overflow-hidden hover:opacity-90 transition ${
-                  isItemBlocked ? 'bg-amber-800' : depth === 0 ? 'bg-slate-900' : 'bg-slate-700'
-                }`}
-                style={{ left: itemBar.left, width: itemBar.width }}
-              >
-                <div
-                  className={`absolute left-0 top-0 bottom-0 transition-all duration-300 ${isItemBlocked ? 'bg-amber-500/80' : 'bg-sky-500/80'}`}
-                  style={{ width: `${itemProgress}%` }}
-                />
-                <span className="relative z-10 text-[10px] font-bold text-white truncate drop-shadow-xs flex items-center gap-1.5">
-                  {isItemBlocked && <Lock size={10} />}
-                  <span>{node.title}</span>
-                </span>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {isExpanded && (
-          <>
-            {node.children && node.children.map((child: any) => renderScheduleTree(child, depth + 1))}
-
-            {itemTasks.map(task => {
-              const isDone = task.status === 'concluida';
-              const isInProgress = task.status === 'em_andamento';
-              const isTaskBlockedManual = task.status === 'bloqueada';
-              const nowStr = new Date().toISOString().split('T')[0];
-              const isLate = !isDone && task.due_date && task.due_date < nowStr;
-              
-              // Barra gerada com base nas datas da própria tarefa (independente do item pai)
-              const taskBar = getBarCoordinates(task.start_date, task.due_date);
-
-              const depTask = task.depends_on_task_id ? tasks.find(t => t.id === task.depends_on_task_id) : null;
-              const isBlockedByDependency = (depTask && depTask.status !== 'concluida') || isItemBlocked;
-
-              return (
-                <div key={task.id} className="flex items-center hover:bg-slate-50 transition border-b border-slate-100">
-                  {/* CÉLULA DE INFORMAÇÕES DA TAREFA (SEM CHECKBOX AVULSO QUE CAUSAVA ERRO) */}
-                  <div
-                    style={{ paddingLeft: `${36 + depth * 20}px` }}
-                    className="w-72 sm:w-80 h-9 p-2 pr-3 border-r border-slate-200 shrink-0 flex items-center justify-between gap-2 min-w-0"
-                  >
-                    <div
-                      onClick={() => {
-                        setActionTarget({
-                          id: task.id,
-                          title: task.title,
-                          type: 'task',
-                          start: task.start_date,
-                          due: task.due_date,
-                          status: task.status,
-                          dependsOnId: task.depends_on_task_id,
-                          isBlocked: isBlockedByDependency,
-                          dependencyTitle: depTask?.title || depItem?.title,
-                          itemRef: node,
-                          taskRef: task
-                        });
-                      }}
-                      className="flex items-center gap-2 min-w-0 cursor-pointer flex-1 group"
-                    >
-                      {/* Ícone de Estado Visual */}
-                      <div className="shrink-0">
-                        {isTaskBlockedManual ? (
-                          <ShieldAlert size={15} className="text-rose-600" />
-                        ) : isBlockedByDependency ? (
-                          <Lock size={14} className="text-amber-500" />
-                        ) : isDone ? (
-                          <CheckCircle2 size={15} className="text-emerald-600" />
-                        ) : isInProgress ? (
-                          <PlayCircle size={15} className="text-sky-500" />
-                        ) : (
-                          <Square size={15} className="text-slate-300 group-hover:text-slate-500" />
-                        )}
-                      </div>
-
-                      <span className={`text-xs truncate transition-colors ${
-                        isDone 
-                          ? 'line-through text-slate-400' 
-                          : isTaskBlockedManual 
-                          ? 'text-rose-900 font-bold' 
-                          : 'font-semibold text-slate-800 group-hover:text-sky-600'
-                      }`}>
-                        {task.title}
-                      </span>
-                    </div>
-
-                    {task.due_date && (
-                      <span className={`text-[10px] font-medium shrink-0 ${isLate ? 'text-rose-600 font-bold' : 'text-slate-400'}`}>
-                        {new Date(task.due_date + 'T00:00:00').toLocaleDateString('pt-BR')}
-                      </span>
-                    )}
-                  </div>
-
-                  {/* ÁREA DO GANTT DA TAREFA (h-9 = 36px) */}
-                  <div
-                    onClick={() => {
-                      setActionTarget({
-                        id: task.id,
-                        title: task.title,
-                        type: 'task',
-                        start: task.start_date,
-                        due: task.due_date,
-                        status: task.status,
-                        dependsOnId: task.depends_on_task_id,
-                        isBlocked: isBlockedByDependency,
-                        dependencyTitle: depTask?.title || depItem?.title,
-                        itemRef: node,
-                        taskRef: task
-                      });
-                    }}
-                    className={`flex-1 h-9 relative flex items-center overflow-hidden ${permissions.canEditSchedule ? 'cursor-pointer' : 'cursor-default'}`}
-                  >
-                    <div className="absolute inset-0 flex pointer-events-none">
-                      {timeColumns.map((col, idx) => (
-                        <div key={idx} className={`flex-1 min-w-[65px] border-r border-slate-100 last:border-r-0 h-full ${col.isToday ? 'bg-sky-50/20' : ''}`} />
-                      ))}
-                    </div>
-
-                    {todayPosition && (
-                      <div className="absolute top-0 bottom-0 w-0.5 bg-rose-500 z-20 pointer-events-none" style={{ left: todayPosition }} />
-                    )}
-
-                    {taskBar && (
-                      <div
-                        className={`absolute h-5 rounded-md shadow-2xs z-10 flex items-center px-2 transition hover:opacity-90 ${
-                          isDone 
-                            ? 'bg-emerald-500 text-white' 
-                            : isTaskBlockedManual 
-                            ? 'bg-rose-500 text-white' 
-                            : isBlockedByDependency 
-                            ? 'bg-amber-500 text-white' 
-                            : isLate 
-                            ? 'bg-rose-500 text-white animate-pulse' 
-                            : 'bg-sky-500 text-white'
-                        }`}
-                        style={{ left: taskBar.left, width: taskBar.width }}
-                      >
-                        <span className="text-[9px] font-bold truncate drop-shadow-xs flex items-center gap-1">
-                          {isTaskBlockedManual ? <ShieldAlert size={9} /> : isBlockedByDependency ? <Lock size={9} /> : null}
-                          <span>{task.title}</span>
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </>
-        )}
-      </React.Fragment>
-    );
-  };
-
   if (loading) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center h-full text-slate-400 text-xs py-20">
-        <Loader2 size={24} className="animate-spin text-sky-600 mb-2" />
+        <Loader2 className="animate-spin text-sky-600 mb-2" size={24} />
         <span className="font-semibold text-slate-600">Sincronizando cronograma operacional...</span>
       </div>
     );
@@ -1026,73 +874,106 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
   return (
     <div className="flex flex-col h-full space-y-3 select-none pb-4">
       
-      {/* ======================================================== */}
-      {/* 1. BARRA SUPERIOR DE CONTROLE (ORGANIZADA EM 2 LINHAS) */}
-      {/* ======================================================== */}
+      {/* 1. BARRA SUPERIOR DE CONTROLE */}
       <div className="bg-white border border-slate-200/90 rounded-2xl p-3 sm:p-3.5 shadow-2xs space-y-3 shrink-0">
         
-        {/* LINHA 1: CARDS DE MÉTRICAS */}
-        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-0.5">
-          <div className="bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl flex items-center gap-2 shrink-0">
-            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Tarefas</span>
-            <strong className="text-slate-900 text-xs font-black">{metrics.total}</strong>
-          </div>
-
-          <div className="bg-emerald-50/70 border border-emerald-200/80 px-3 py-1.5 rounded-xl flex items-center gap-2 shrink-0">
-            <span className="text-[10px] text-emerald-700 font-bold uppercase tracking-wider flex items-center gap-1">
-              <CheckCircle2 size={12} />
-              <span>Concluídas</span>
-            </span>
-            <strong className="text-emerald-900 text-xs font-black">
-              {metrics.completed} ({metrics.total > 0 ? Math.round((metrics.completed / metrics.total) * 100) : 0}%)
-            </strong>
-          </div>
-
-          <div className="bg-sky-50/70 border border-sky-200/80 px-3 py-1.5 rounded-xl flex items-center gap-2 shrink-0">
-            <span className="text-[10px] text-sky-700 font-bold uppercase tracking-wider flex items-center gap-1">
-              <Clock size={12} />
-              <span>Em Execução</span>
-            </span>
-            <strong className="text-sky-900 text-xs font-black">{metrics.inProgress}</strong>
-          </div>
-
-          <div className={`px-3 py-1.5 rounded-xl border flex items-center gap-2 shrink-0 transition ${
-            metrics.delayed > 0 
-              ? 'bg-rose-50 border-rose-200 text-rose-900 font-bold shadow-2xs' 
-              : 'bg-slate-50/80 border-slate-200/80 text-slate-600'
-          }`}>
-            <span className={`text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 ${metrics.delayed > 0 ? 'text-rose-700' : 'text-slate-400'}`}>
-              <AlertTriangle size={12} />
-              <span>Atrasadas</span>
-            </span>
-            <strong className={`text-xs font-black ${metrics.delayed > 0 ? 'text-rose-900' : 'text-slate-800'}`}>
-              {metrics.delayed}
-            </strong>
-          </div>
-
-          {metrics.unassigned > 0 && (
-            <div className="bg-amber-50/70 border border-amber-200/80 px-3 py-1.5 rounded-xl flex items-center gap-2 shrink-0">
-              <span className="text-[10px] text-amber-700 font-bold uppercase tracking-wider flex items-center gap-1">
-                <CalendarRange size={12} />
-                <span>Sem Prazos</span>
-              </span>
-              <strong className="text-amber-900 text-xs font-black">{metrics.unassigned}</strong>
+        {/* LINHA 1: MÉTRICAS + IMPRIMIR E AGENDAR EM MASSA */}
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-0.5">
+            <div className="bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl flex items-center gap-2 shrink-0">
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Tarefas</span>
+              <strong className="text-slate-900 text-xs font-black">{metrics.total}</strong>
             </div>
-          )}
+
+            <div className="bg-emerald-50/70 border border-emerald-200/80 px-3 py-1.5 rounded-xl flex items-center gap-2 shrink-0">
+              <span className="text-[10px] text-emerald-700 font-bold uppercase tracking-wider flex items-center gap-1">
+                <CheckCircle2 size={12} />
+                <span>Concluídas</span>
+              </span>
+              <strong className="text-emerald-900 text-xs font-black">
+                {metrics.completed} ({metrics.total > 0 ? Math.round((metrics.completed / metrics.total) * 100) : 0}%)
+              </strong>
+            </div>
+
+            <div className="bg-sky-50/70 border border-sky-200/80 px-3 py-1.5 rounded-xl flex items-center gap-2 shrink-0">
+              <span className="text-[10px] text-sky-700 font-bold uppercase tracking-wider flex items-center gap-1">
+                <Clock size={12} />
+                <span>Em Execução</span>
+              </span>
+              <strong className="text-sky-900 text-xs font-black">{metrics.inProgress}</strong>
+            </div>
+
+            <div className={`px-3 py-1.5 rounded-xl border flex items-center gap-2 shrink-0 transition ${
+              metrics.delayed > 0 
+                ? 'bg-rose-50 border-rose-200 text-rose-900 font-bold shadow-2xs' 
+                : 'bg-slate-50/80 border-slate-200/80 text-slate-600'
+            }`}>
+              <span className={`text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 ${metrics.delayed > 0 ? 'text-rose-700' : 'text-slate-400'}`}>
+                <AlertTriangle size={12} />
+                <span>Atrasadas</span>
+              </span>
+              <strong className={`text-xs font-black ${metrics.delayed > 0 ? 'text-rose-900' : 'text-slate-800'}`}>
+                {metrics.delayed}
+              </strong>
+            </div>
+
+            {/* BADGE: FILTRAR SOMENTE COM PRAZOS */}
+            <button
+              type="button"
+              onClick={() => setOnlyScheduled(!onlyScheduled)}
+              className={`px-3 py-1.5 rounded-xl border flex items-center gap-2 shrink-0 transition cursor-pointer ${
+                onlyScheduled
+                  ? 'bg-sky-600 border-sky-600 text-white font-bold shadow-2xs'
+                  : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
+              }`}
+              title="Ocultar tarefas sem prazos na visualização"
+            >
+              <CalendarCheck2 className={onlyScheduled ? 'text-white' : 'text-sky-600'} size={12} />
+              <span className="text-[10px] font-bold uppercase tracking-wider">
+                {onlyScheduled ? 'Apenas Agendadas' : `Agendadas: ${metrics.scheduledCount}`}
+              </span>
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0 ml-auto">
+            {canEditSchedule && (
+              <button
+                type="button"
+                onClick={() => {
+                  setBatchSelectedTaskIds(new Set());
+                  setIsBatchScheduleOpen(true);
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-bold shadow-2xs cursor-pointer transition"
+                title="Abrir painel para agendar várias tarefas em conjunto"
+              >
+                <Zap className="fill-white" size={14} />
+                <span>Agendar em Massa</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => setIsPrintModalOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold shadow-2xs cursor-pointer transition"
+            >
+              <Printer className="text-slate-500" size={14} />
+              <span className="hidden sm:inline">Imprimir / PDF</span>
+            </button>
+          </div>
         </div>
 
-        {/* LINHA 2: BUSCA | FILTRO | ZOOM | NAVEGAÇÃO TEMPORAL */}
+        {/* LINHA 2: BUSCA | FILTROS | ORDENAÇÃO | ALTERNADOR (GANTT vs LISTA) | ZOOM */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pt-2 border-t border-slate-100">
           
-          {/* Lado Esquerdo: Campo de Busca e Botão de Filtro */}
-          <div className="flex items-center gap-2 flex-1 max-w-md">
-            <div className="relative flex-1">
-              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+          <div className="flex items-center gap-2 flex-1 max-w-lg flex-wrap">
+            {/* Campo de Busca */}
+            <div className="relative flex-1 min-w-[180px]">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
               <input
                 type="text"
                 value={searchTerm}
                 onChange={e => setSearchTerm(e.target.value)}
-                placeholder="Buscar no cronograma..."
+                placeholder="Buscar por tarefa ou local..."
                 className="w-full pl-8 pr-7 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-sky-500 transition text-slate-800 placeholder-slate-400 shadow-2xs font-medium"
               />
               {searchTerm && (
@@ -1106,97 +987,632 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
               )}
             </div>
 
-            {/* Botão de Filtro */}
+            {/* Botão de Ordenação */}
+            <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-xl p-1 shadow-2xs">
+              <ArrowUpDown className="text-slate-400 ml-1" size={13} />
+              <select
+                value={sortBy}
+                onChange={e => setSortBy(e.target.value as SortOption)}
+                className="bg-transparent text-xs font-bold text-slate-700 outline-none cursor-pointer pr-1"
+              >
+                <option value="due_date">Por Prazo</option>
+                <option value="title">Por Nome da Tarefa</option>
+                <option value="hierarchy">Por Pavimento/Local</option>
+                <option value="status">Por Status</option>
+              </select>
+              <button
+                type="button"
+                onClick={() => setSortOrder(prev => (prev === 'asc' ? 'desc' : 'asc'))}
+                className="text-[10px] font-black text-sky-600 hover:bg-sky-50 px-1.5 py-0.5 rounded cursor-pointer"
+                title="Inverter direção da ordenação"
+              >
+                {sortOrder === 'asc' ? 'ASC' : 'DESC'}
+              </button>
+            </div>
+
+            {/* Botão de Filtro Avançado */}
             <button
               ref={filterButtonRef}
               type="button"
               onClick={handleToggleFilterPopover}
-              title="Filtrar cronograma"
+              title="Filtros avançados"
               className={`p-2 border rounded-xl transition cursor-pointer shadow-2xs flex items-center justify-center relative shrink-0 ${
-                activeFiltersCount > 0
+                (filterStatus !== 'all' || filterItemType !== 'all' || filterSubitemType !== 'all' || filterLocation !== 'all' || filterExecutor !== 'all')
                   ? 'bg-sky-50 border-sky-300 text-sky-700 font-bold'
                   : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
               }`}
             >
               <Filter size={15} />
-              {activeFiltersCount > 0 && (
-                <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-sky-600 text-white text-[9px] flex items-center justify-center font-bold shadow-2xs">
-                  {activeFiltersCount}
-                </span>
-              )}
             </button>
           </div>
 
-          {/* Lado Direito: Controles do Cronograma (Zoom + Navegação) */}
-          <div className="flex items-center gap-2 justify-end shrink-0">
-            {/* Seletor de Zoom */}
+          {/* Lado Direito: Alternador Gantt/Lista + Zoom + Navegação */}
+          <div className="flex items-center gap-2 justify-end shrink-0 flex-wrap">
+            
+            {/* GANTT vs LISTAGEM */}
             <div className="flex items-center bg-slate-100 p-0.5 rounded-xl border border-slate-200 text-xs font-semibold">
               <button
                 type="button"
-                onClick={() => setZoomLevel('days')}
-                className={`px-2.5 py-1 rounded-lg transition cursor-pointer text-xs ${
-                  zoomLevel === 'days' ? 'bg-white text-sky-700 font-bold shadow-2xs' : 'text-slate-500 hover:text-slate-800'
+                onClick={() => setViewMode('gantt')}
+                className={`px-3 py-1 rounded-lg transition cursor-pointer text-xs flex items-center gap-1.5 ${
+                  viewMode === 'gantt' ? 'bg-white text-sky-700 font-bold shadow-2xs' : 'text-slate-500 hover:text-slate-800'
                 }`}
               >
-                Dias
+                <Kanban size={13} />
+                <span>Gantt</span>
               </button>
               <button
                 type="button"
-                onClick={() => setZoomLevel('weeks')}
-                className={`px-2.5 py-1 rounded-lg transition cursor-pointer text-xs ${
-                  zoomLevel === 'weeks' ? 'bg-white text-sky-700 font-bold shadow-2xs' : 'text-slate-500 hover:text-slate-800'
+                onClick={() => setViewMode('list')}
+                className={`px-3 py-1 rounded-lg transition cursor-pointer text-xs flex items-center gap-1.5 ${
+                  viewMode === 'list' ? 'bg-white text-sky-700 font-bold shadow-2xs' : 'text-slate-500 hover:text-slate-800'
                 }`}
               >
-                Semanas
-              </button>
-              <button
-                type="button"
-                onClick={() => setZoomLevel('months')}
-                className={`px-2.5 py-1 rounded-lg transition cursor-pointer text-xs ${
-                  zoomLevel === 'months' ? 'bg-white text-sky-700 font-bold shadow-2xs' : 'text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                Meses
+                <ListOrdered size={13} />
+                <span>Listagem</span>
               </button>
             </div>
 
-            {/* Navegador de Data */}
-            <div className="flex items-center gap-0.5 bg-white border border-slate-200 p-0.5 rounded-xl shadow-2xs">
-              <button
-                type="button"
-                onClick={() => handleShiftTime('prev')}
-                className="p-1 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition cursor-pointer"
-                title="Retroceder período"
-              >
-                <ChevronLeft size={16} />
-              </button>
+            {viewMode === 'gantt' && (
+              <>
+                <div className="flex items-center bg-slate-100 p-0.5 rounded-xl border border-slate-200 text-xs font-semibold">
+                  <button
+                    type="button"
+                    onClick={() => setZoomLevel('days')}
+                    className={`px-2 py-1 rounded-lg transition cursor-pointer text-xs ${
+                      zoomLevel === 'days' ? 'bg-white text-sky-700 font-bold shadow-2xs' : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    Dias
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setZoomLevel('weeks')}
+                    className={`px-2 py-1 rounded-lg transition cursor-pointer text-xs ${
+                      zoomLevel === 'weeks' ? 'bg-white text-sky-700 font-bold shadow-2xs' : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    Semanas
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setZoomLevel('months')}
+                    className={`px-2 py-1 rounded-lg transition cursor-pointer text-xs ${
+                      zoomLevel === 'months' ? 'bg-white text-sky-700 font-bold shadow-2xs' : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    Meses
+                  </button>
+                </div>
 
-              <button
-                type="button"
-                onClick={() => setBaseDate(new Date())}
-                className="px-2.5 py-1 text-xs font-bold text-slate-700 hover:bg-slate-100 rounded-lg cursor-pointer"
-              >
-                Hoje
-              </button>
+                <div className="flex items-center gap-0.5 bg-white border border-slate-200 p-0.5 rounded-xl shadow-2xs">
+                  <button
+                    type="button"
+                    onClick={() => handleShiftTime('prev')}
+                    className="p-1 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition cursor-pointer"
+                  >
+                    <ChevronLeft size={16} />
+                  </button>
 
-              <button
-                type="button"
-                onClick={() => handleShiftTime('next')}
-                className="p-1 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition cursor-pointer"
-                title="Avançar período"
-              >
-                <ChevronRight size={16} />
-              </button>
-            </div>
+                  <button
+                    type="button"
+                    onClick={() => setBaseDate(new Date())}
+                    className="px-2.5 py-1 text-xs font-bold text-slate-700 hover:bg-slate-100 rounded-lg cursor-pointer"
+                  >
+                    Hoje
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleShiftTime('next')}
+                    className="p-1 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition cursor-pointer"
+                  >
+                    <ChevronRight size={16} />
+                  </button>
+                </div>
+              </>
+            )}
+
           </div>
 
         </div>
 
       </div>
 
-      {/* ======================================================== */}
-      {/* POPOVER FLUTUANTE DE FILTROS (VIA PORTAL) */}
-      {/* ======================================================== */}
+      {/* 2. CORPO DO GANTT */}
+      {viewMode === 'gantt' ? (
+        <div className="flex-1 min-h-0 bg-white border border-slate-200 rounded-2xl shadow-2xs flex flex-col overflow-hidden">
+          <div className="flex-1 min-h-0 overflow-auto flex flex-col">
+            <div className="min-w-[850px] flex-1 flex flex-col">
+              
+              {/* Cabeçalho da Grade */}
+              <div className="flex border-b border-slate-200 bg-slate-50 text-xs font-bold text-slate-700 shrink-0 sticky top-0 z-30">
+                <div className="w-80 sm:w-96 p-3 px-4 border-r border-slate-200 shrink-0 flex items-center justify-between bg-slate-50">
+                  <span className="uppercase text-[10px] text-slate-400 tracking-wider">Tarefa & Local</span>
+                  <span className="text-[10px] font-semibold text-slate-500 bg-white px-2 py-0.5 rounded-md border border-slate-200">
+                    {sortedTasksList.length} atividades
+                  </span>
+                </div>
+
+                <div className="flex-1 flex overflow-hidden">
+                  {timeColumns.map((col, idx) => (
+                    <div
+                      key={idx}
+                      className={`flex-1 min-w-[65px] p-2 text-center border-r border-slate-200/70 last:border-r-0 truncate transition ${
+                        col.isToday ? 'bg-sky-50/90 border-b-2 border-b-sky-500' : ''
+                      }`}
+                    >
+                      <span className={`block text-[10px] uppercase tracking-tight ${col.isToday ? 'text-sky-700 font-black' : 'text-slate-400'}`}>
+                        {col.label}
+                      </span>
+                      <span className={`block text-[11px] font-black ${col.isToday ? 'text-sky-950 font-black' : 'text-slate-700'}`}>
+                        {col.subLabel}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Linhas de Tarefas */}
+              <div className="flex-1 divide-y divide-slate-100">
+                {sortedTasksList.length === 0 ? (
+                  <div className="p-16 text-center text-xs text-slate-400">
+                    Nenhuma tarefa corresponde aos filtros aplicados.
+                  </div>
+                ) : (
+                  sortedTasksList.map(task => {
+                    const isDone = task.status === 'concluida';
+                    const isInProgress = task.status === 'em_andamento';
+                    const isTaskBlocked = task.status === 'bloqueada';
+                    const nowStr = new Date().toISOString().split('T')[0];
+                    const isLate = !isDone && task.due_date && task.due_date < nowStr;
+                    const taskBar = getBarCoordinates(task.start_date, task.due_date);
+                    const breadcrumb = getHierarchyBreadcrumb(task.work_item_id);
+                    const parent = itemsMap.get(task.work_item_id);
+
+                    return (
+                      <div key={task.id} className="flex items-center hover:bg-slate-50/70 transition">
+                        
+                        {/* Identificação da Tarefa */}
+                        <div className="w-80 sm:w-96 h-12 p-2 px-3 border-r border-slate-200 shrink-0 flex items-center justify-between gap-2 min-w-0">
+                          <div
+                            onClick={() => {
+                              setActionTarget({
+                                id: task.id,
+                                title: task.title,
+                                type: 'task',
+                                start: task.start_date,
+                                due: task.due_date,
+                                status: task.status,
+                                dependsOnId: task.depends_on_task_id,
+                                isBlocked: isTaskBlocked,
+                                itemRef: parent,
+                                taskRef: task
+                              });
+                            }}
+                            className="flex items-center gap-2 min-w-0 cursor-pointer flex-1 group"
+                          >
+                            <div className="shrink-0">
+                              {isTaskBlocked ? (
+                                <ShieldAlert className="text-rose-600" size={15} />
+                              ) : isDone ? (
+                                <CheckCircle2 className="text-emerald-600" size={15} />
+                              ) : isInProgress ? (
+                                <PlayCircle className="text-sky-500" size={15} />
+                              ) : (
+                                <Clock className="text-slate-300 group-hover:text-slate-500" size={15} />
+                              )}
+                            </div>
+
+                            <div className="min-w-0">
+                              <span className={`block text-xs font-bold truncate leading-tight transition-colors ${
+                                isDone ? 'line-through text-slate-400' : 'text-slate-800 group-hover:text-sky-600'
+                              }`}>
+                                {task.title}
+                              </span>
+                              <span className="text-[10px] text-slate-400 block truncate" title={breadcrumb}>
+                                {breadcrumb}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="text-right shrink-0">
+                            {task.due_date ? (
+                              <span className={`text-[10px] font-mono font-bold block ${isLate ? 'text-rose-600' : 'text-slate-600'}`}>
+                                {new Date(task.due_date + 'T00:00:00').toLocaleDateString('pt-BR')}
+                              </span>
+                            ) : (
+                              <span className="text-[9px] text-amber-600 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded font-bold">
+                                Sem prazo
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Grade do Gantt */}
+                        <div className="flex-1 h-12 relative flex items-center overflow-hidden">
+                          <div className="absolute inset-0 flex">
+                            {timeColumns.map((col, idx) => (
+                              <div
+                                key={idx}
+                                onClick={() => handleDirectScheduleCell(task, col)}
+                                className={`flex-1 min-w-[65px] border-r border-slate-100 last:border-r-0 h-full hover:bg-sky-50/50 cursor-pointer transition ${
+                                  col.isToday ? 'bg-sky-50/20' : ''
+                                }`}
+                                title={canEditSchedule ? `Clique para agendar para ${col.label} (${col.subLabel})` : undefined}
+                              />
+                            ))}
+                          </div>
+
+                          {todayPosition && (
+                            <div className="absolute top-0 bottom-0 w-0.5 bg-rose-500 z-20 pointer-events-none" style={{ left: todayPosition }} />
+                          )}
+
+                          {/* Barra do Gantt */}
+                          {taskBar && (
+                            <div
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setActionTarget({
+                                  id: task.id,
+                                  title: task.title,
+                                  type: 'task',
+                                  start: task.start_date,
+                                  due: task.due_date,
+                                  status: task.status,
+                                  dependsOnId: task.depends_on_task_id,
+                                  isBlocked: isTaskBlocked,
+                                  itemRef: parent,
+                                  taskRef: task
+                                });
+                              }}
+                              className={`absolute h-6 rounded-lg shadow-2xs z-10 flex items-center px-2.5 transition hover:brightness-110 cursor-pointer ${
+                                isDone 
+                                  ? 'bg-emerald-500 text-white' 
+                                  : isTaskBlocked 
+                                  ? 'bg-rose-500 text-white' 
+                                  : isLate 
+                                  ? 'bg-rose-500 text-white animate-pulse' 
+                                  : 'bg-sky-500 text-white'
+                              }`}
+                              style={{ left: taskBar.left, width: taskBar.width }}
+                            >
+                              <span className="text-[10px] font-bold truncate drop-shadow-xs flex items-center gap-1">
+                                {isTaskBlocked && <ShieldAlert size={10} />}
+                                <span>{task.title}</span>
+                              </span>
+                            </div>
+                          )}
+                        </div>
+
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+            </div>
+          </div>
+        </div>
+      ) : (
+        /* VISUALIZAÇÃO EM LISTAGEM / TABELA */
+        <div className="flex-1 min-h-0 bg-white border border-slate-200 rounded-2xl shadow-2xs flex flex-col overflow-hidden">
+          <div className="p-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between text-xs font-bold text-slate-600">
+            <span>Listagem de Atividades ({sortedTasksList.length})</span>
+            <span className="text-[11px] text-slate-400 font-normal">Clique na linha para ver opções e apontar</span>
+          </div>
+
+          <div className="flex-1 min-h-0 overflow-auto">
+            <table className="w-full text-left text-xs text-slate-700">
+              <thead className="bg-slate-50/80 border-b border-slate-200 text-[10px] font-bold text-slate-400 uppercase tracking-wider sticky top-0 z-10">
+                <tr>
+                  <th className="py-2.5 px-4 w-12 text-center">Status</th>
+                  <th className="py-2.5 px-4">Hierarquia & Atividade</th>
+                  <th className="py-2.5 px-4 w-32 text-center">Início</th>
+                  <th className="py-2.5 px-4 w-32 text-center">Término</th>
+                  <th className="py-2.5 px-4 w-28 text-center">Tipo</th>
+                  <th className="py-2.5 px-4 w-28 text-right">Meta</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 font-medium">
+                {sortedTasksList.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="py-12 text-center text-slate-400 italic">
+                      Nenhuma atividade encontrada.
+                    </td>
+                  </tr>
+                ) : (
+                  sortedTasksList.map(task => {
+                    const isDone = task.status === 'concluida';
+                    const isBlocked = task.status === 'bloqueada';
+                    const nowStr = new Date().toISOString().split('T')[0];
+                    const isLate = !isDone && task.due_date && task.due_date < nowStr;
+                    const breadcrumb = getHierarchyBreadcrumb(task.work_item_id);
+                    const parent = itemsMap.get(task.work_item_id);
+
+                    return (
+                      <tr
+                        key={task.id}
+                        onClick={() => {
+                          setActionTarget({
+                            id: task.id,
+                            title: task.title,
+                            type: 'task',
+                            start: task.start_date,
+                            due: task.due_date,
+                            status: task.status,
+                            dependsOnId: task.depends_on_task_id,
+                            isBlocked,
+                            itemRef: parent,
+                            taskRef: task
+                          });
+                        }}
+                        className="hover:bg-slate-50/70 transition cursor-pointer"
+                      >
+                        <td className="py-2.5 px-4 text-center">
+                          {isBlocked ? (
+                            <ShieldAlert className="text-rose-600 mx-auto" size={15} />
+                          ) : isDone ? (
+                            <CheckCircle2 className="text-emerald-600 mx-auto" size={15} />
+                          ) : isLate ? (
+                            <AlertTriangle className="text-rose-500 mx-auto" size={15} />
+                          ) : (
+                            <Clock className="text-sky-500 mx-auto" size={15} />
+                          )}
+                        </td>
+                        <td className="py-2.5 px-4">
+                          <strong className="block text-slate-900 text-xs font-bold">{task.title}</strong>
+                          <span className="text-[10px] text-slate-400">{breadcrumb}</span>
+                        </td>
+                        <td className="py-2.5 px-4 text-center text-slate-600 font-mono">
+                          {task.start_date ? new Date(task.start_date + 'T00:00:00').toLocaleDateString('pt-BR') : '—'}
+                        </td>
+                        <td className="py-2.5 px-4 text-center font-mono">
+                          <span className={isLate ? 'text-rose-600 font-bold' : 'text-slate-800'}>
+                            {task.due_date ? new Date(task.due_date + 'T00:00:00').toLocaleDateString('pt-BR') : '—'}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-4 text-center">
+                          {task.task_type ? (
+                            <span className="px-2 py-0.5 bg-slate-100 text-slate-700 rounded-md text-[10px] font-semibold border border-slate-200">
+                              {task.task_type}
+                            </span>
+                          ) : '—'}
+                        </td>
+                        <td className="py-2.5 px-4 text-right font-bold text-slate-900">
+                          {task.has_progress_tracking ? `${task.quantity_planned} ${task.unit || 'un'}` : 'Checklist'}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* 3. MODAL DE AGENDAMENTO EM MASSA (PAINEL DUPLO) */}
+      {isBatchScheduleOpen && canEditSchedule && (
+        <div className="fixed inset-0 z-[160] flex items-center justify-center p-3 sm:p-5 bg-slate-950/70 backdrop-blur-2xs animate-in fade-in duration-150">
+          <div className="bg-white border border-slate-200 rounded-3xl p-6 max-w-5xl w-full shadow-2xl space-y-4 animate-in zoom-in-95 duration-150 h-[88vh] flex flex-col">
+            
+            {/* Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-sky-100 text-sky-700 flex items-center justify-center shrink-0">
+                  <Zap className="fill-sky-700" size={20} />
+                </div>
+                <div>
+                  <h4 className="font-black text-slate-900 text-base leading-tight">Agendamento em Massa</h4>
+                  <p className="text-xs text-slate-400">Selecione as tarefas na esquerda para agrupar na lista de aplicação</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsBatchScheduleOpen(false)}
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Configuração de Prazos do Lote */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3.5 bg-slate-50 border border-slate-200/80 rounded-2xl shrink-0">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Data de Início da Atividade *</label>
+                <input
+                  type="date"
+                  required
+                  value={batchStartDate}
+                  onChange={e => setBatchStartDate(e.target.value)}
+                  className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-xl font-semibold text-slate-800 text-xs focus:ring-2 focus:ring-sky-500 shadow-2xs"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Data Limite de Término / Entrega *</label>
+                <input
+                  type="date"
+                  required
+                  min={batchStartDate}
+                  value={batchDueDate}
+                  onChange={e => setBatchDueDate(e.target.value)}
+                  className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-xl font-semibold text-slate-800 text-xs focus:ring-2 focus:ring-sky-500 shadow-2xs"
+                />
+              </div>
+            </div>
+
+            {/* PAINEL DUPLO */}
+            <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-2 gap-4">
+              
+              {/* LADO ESQUERDO: DISPONÍVEIS */}
+              <div className="border border-slate-200 rounded-2xl flex flex-col min-h-0 bg-slate-50/40 p-3 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                    Tarefas Disponíveis ({batchFilteredTasks.length})
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const allIds = batchFilteredTasks.map(t => t.id);
+                      setBatchSelectedTaskIds(new Set([...Array.from(batchSelectedTaskIds), ...allIds]));
+                    }}
+                    className="text-[11px] font-bold text-sky-600 hover:underline cursor-pointer"
+                  >
+                    Adicionar Todas Deste Filtro
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div className="relative">
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" size={13} />
+                    <input
+                      type="text"
+                      value={batchSearchTerm}
+                      onChange={e => setBatchSearchTerm(e.target.value)}
+                      placeholder="Pesquisar..."
+                      className="w-full pl-8 pr-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 font-medium"
+                    />
+                  </div>
+
+                  <select
+                    value={batchFilterItemId}
+                    onChange={e => setBatchFilterItemId(e.target.value)}
+                    className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 font-medium"
+                  >
+                    <option value="all">Todas as Áreas / Pavimentos</option>
+                    {items.map(it => (
+                      <option key={it.id} value={it.id}>
+                        {it.title}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex-1 min-h-0 overflow-y-auto divide-y divide-slate-100 bg-white rounded-xl border border-slate-200 p-1">
+                  {batchFilteredTasks.length === 0 ? (
+                    <p className="p-8 text-center text-xs text-slate-400 italic">Nenhuma tarefa encontrada.</p>
+                  ) : (
+                    batchFilteredTasks.map(task => {
+                      const isSelected = batchSelectedTaskIds.has(task.id);
+                      const breadcrumb = getHierarchyBreadcrumb(task.work_item_id);
+
+                      return (
+                        <div
+                          key={task.id}
+                          onClick={() => handleToggleBatchTask(task.id)}
+                          className={`p-2.5 rounded-lg flex items-center justify-between gap-2.5 cursor-pointer transition ${
+                            isSelected ? 'bg-sky-50 text-sky-900 font-bold' : 'hover:bg-slate-50 text-slate-700'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${
+                              isSelected ? 'bg-sky-600 border-sky-600 text-white' : 'border-slate-300 bg-white'
+                            }`}>
+                              {isSelected && <Check size={12} />}
+                            </div>
+                            <div className="min-w-0">
+                              <span className="block text-xs truncate">{task.title}</span>
+                              <span className="text-[10px] text-slate-400 block truncate">{breadcrumb}</span>
+                            </div>
+                          </div>
+
+                          <span className="text-[10px] font-mono text-slate-400 shrink-0">
+                            {task.due_date ? new Date(task.due_date + 'T00:00:00').toLocaleDateString('pt-BR') : 'Sem prazo'}
+                          </span>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+              {/* LADO DIREITO: SELECIONADAS */}
+              <div className="border border-slate-200 rounded-2xl flex flex-col min-h-0 bg-white p-3 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-sky-700 uppercase tracking-wider flex items-center gap-1.5">
+                    <CheckCircle2 className="text-sky-600" size={14} />
+                    <span>Tarefas Selecionadas ({batchSelectedTaskIds.size})</span>
+                  </span>
+                  {batchSelectedTaskIds.size > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setBatchSelectedTaskIds(new Set())}
+                      className="text-[11px] font-bold text-rose-600 hover:underline cursor-pointer"
+                    >
+                      Remover Todas
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex-1 min-h-0 overflow-y-auto divide-y divide-slate-100 rounded-xl border border-slate-200 p-1">
+                  {batchSelectedTaskIds.size === 0 ? (
+                    <div className="h-full flex flex-col items-center justify-center p-8 text-center text-slate-400 text-xs">
+                      <Zap className="text-slate-300 mb-2" size={28} />
+                      <p className="font-semibold text-slate-600">Nenhuma tarefa adicionada</p>
+                      <p className="text-[11px] max-w-xs mt-0.5">Selecione na lista ao lado para aplicar a nova data em massa.</p>
+                    </div>
+                  ) : (
+                    Array.from(batchSelectedTaskIds).map(id => {
+                      const t = tasks.find(x => x.id === id);
+                      if (!t) return null;
+                      const breadcrumb = getHierarchyBreadcrumb(t.work_item_id);
+
+                      return (
+                        <div key={id} className="p-2.5 flex items-center justify-between gap-2 hover:bg-slate-50 transition rounded-lg">
+                          <div className="min-w-0">
+                            <span className="block text-xs font-bold text-slate-800 truncate">{t.title}</span>
+                            <span className="text-[10px] text-slate-400 block truncate">{breadcrumb}</span>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => handleToggleBatchTask(id)}
+                            className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer transition shrink-0"
+                            title="Remover deste lote"
+                          >
+                            <Minus size={14} />
+                          </button>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+            </div>
+
+            {/* Rodapé do Modal */}
+            <div className="pt-2 border-t border-slate-100 flex items-center justify-between shrink-0">
+              <span className="text-xs text-slate-500 font-semibold">
+                Total para atualizar: <strong className="text-slate-900">{batchSelectedTaskIds.size} tarefas</strong>
+              </span>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsBatchScheduleOpen(false)}
+                  className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-xl font-semibold cursor-pointer text-xs"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  disabled={savingBatch || batchSelectedTaskIds.size === 0}
+                  onClick={handleApplyBatchSchedule}
+                  className="px-6 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl font-bold shadow-2xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50 text-xs"
+                >
+                  {savingBatch ? <Loader2 className="animate-spin" size={13} /> : <Save size={13} />}
+                  <span>Aplicar Datas em Massa</span>
+                </button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* POPOVER FLUTUANTE DE FILTROS */}
       {isFilterOpen && filterButtonCoords && createPortal(
         <div
           ref={filterPopoverRef}
@@ -1210,34 +1626,32 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
         >
           <div className="flex items-center justify-between pb-2 border-b border-slate-100">
             <span className="font-bold text-slate-900 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
-              <Filter size={13} className="text-sky-600" />
+              <Filter className="text-sky-600" size={13} />
               <span>Filtros do Cronograma</span>
             </span>
-            {activeFiltersCount > 0 && (
-              <button
-                type="button"
-                onClick={() => {
-                  setFilterStatus('all');
-                  setFilterItemType('all');
-                  setFilterSubitemType('all');
-                  setFilterLocation('all');
-                  setFilterExecutor('all');
-                }}
-                className="text-[11px] text-sky-600 hover:underline font-semibold cursor-pointer"
-              >
-                Limpar Todos
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={() => {
+                setFilterStatus('all');
+                setFilterItemType('all');
+                setFilterSubitemType('all');
+                setFilterLocation('all');
+                setFilterExecutor('all');
+                setOnlyScheduled(false);
+              }}
+              className="text-[11px] text-sky-600 hover:underline font-semibold cursor-pointer"
+            >
+              Limpar Todos
+            </button>
           </div>
 
           <div className="space-y-2.5 max-h-[70vh] overflow-y-auto pr-0.5">
-            {/* 1. Situação Operacional */}
             <div>
               <label className="block font-semibold text-slate-700 mb-1 text-[11px]">Situação Operacional</label>
               <select
                 value={filterStatus}
                 onChange={e => setFilterStatus(e.target.value as any)}
-                className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium cursor-pointer text-xs focus:ring-2 focus:ring-sky-500"
+                className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium cursor-pointer text-xs"
               >
                 <option value="all">Todas as Atividades</option>
                 <option value="em_andamento">Liberadas para Execução</option>
@@ -1248,14 +1662,13 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
               </select>
             </div>
 
-            {/* 2. Local no Canteiro */}
             {locationOptions.length > 0 && (
               <div>
                 <label className="block font-semibold text-slate-700 mb-1 text-[11px]">Local no Canteiro</label>
                 <select
                   value={filterLocation}
                   onChange={e => setFilterLocation(e.target.value)}
-                  className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium cursor-pointer text-xs focus:ring-2 focus:ring-sky-500"
+                  className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium cursor-pointer text-xs"
                 >
                   <option value="all">Todos os Locais</option>
                   {locationOptions.map(l => (
@@ -1265,14 +1678,13 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
               </div>
             )}
 
-            {/* 3. Tipo de Item */}
             {itemTypeOptions.length > 0 && (
               <div>
                 <label className="block font-semibold text-slate-700 mb-1 text-[11px]">Tipo de Item</label>
                 <select
                   value={filterItemType}
                   onChange={e => setFilterItemType(e.target.value)}
-                  className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium cursor-pointer text-xs focus:ring-2 focus:ring-sky-500"
+                  className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium cursor-pointer text-xs"
                 >
                   <option value="all">Todos os Tipos de Item</option>
                   {itemTypeOptions.map(t => (
@@ -1282,14 +1694,13 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
               </div>
             )}
 
-            {/* 4. Tipo de Subitem */}
             {subitemTypeOptions.length > 0 && (
               <div>
-                <label className="block font-semibold text-slate-700 mb-1 text-[11px]">Tipo de Subitem / Tarefa</label>
+                <label className="block font-semibold text-slate-700 mb-1 text-[11px]">Tipo de Tarefa</label>
                 <select
                   value={filterSubitemType}
                   onChange={e => setFilterSubitemType(e.target.value)}
-                  className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium cursor-pointer text-xs focus:ring-2 focus:ring-sky-500"
+                  className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium cursor-pointer text-xs"
                 >
                   <option value="all">Todos os Tipos de Tarefa</option>
                   {subitemTypeOptions.map(st => (
@@ -1299,14 +1710,13 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
               </div>
             )}
 
-            {/* 5. Executor */}
             {teamMembers.length > 0 && (
               <div>
-                <label className="block font-semibold text-slate-700 mb-1 text-[11px]">Executor Alocado</label>
+                <label className="block font-semibold text-slate-700 mb-1 text-[11px]">Executor</label>
                 <select
                   value={filterExecutor}
                   onChange={e => setFilterExecutor(e.target.value)}
-                  className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium cursor-pointer text-xs focus:ring-2 focus:ring-sky-500"
+                  className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium cursor-pointer text-xs"
                 >
                   <option value="all">Todos os Colaboradores</option>
                   {teamMembers.map(m => (
@@ -1321,7 +1731,7 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
             <button
               type="button"
               onClick={() => setIsFilterOpen(false)}
-              className="w-full py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold cursor-pointer shadow-2xs transition"
+              className="w-full py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold cursor-pointer"
             >
               Aplicar Filtros
             </button>
@@ -1330,87 +1740,16 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
         document.body
       )}
 
-      {/* ======================================================== */}
-      {/* 2. GRADE GANTT RECURSIVA (COM LINHAS DE TAMANHO ADEQUADO) */}
-      {/* ======================================================== */}
-      <div className="flex-1 min-h-0 bg-white border border-slate-200 rounded-2xl shadow-2xs flex flex-col overflow-hidden">
-        <div className="flex-1 min-h-0 overflow-auto flex flex-col">
-          <div className="min-w-[850px] flex-1 flex flex-col">
-            
-            {/* Cabeçalho da Grade */}
-            <div className="flex border-b border-slate-200 bg-slate-50 text-xs font-bold text-slate-700 shrink-0 sticky top-0 z-30">
-              
-              <div className="w-72 sm:w-80 p-3 px-4 border-r border-slate-200 shrink-0 flex items-center justify-between bg-slate-50">
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={handleToggleExpandAll}
-                    className="p-1 bg-white hover:bg-slate-200 text-slate-600 rounded-lg border border-slate-200 shadow-2xs transition cursor-pointer"
-                    title={expandedItemIds.size === items.length ? 'Recolher toda a árvore' : 'Expandir toda a árvore'}
-                  >
-                    {expandedItemIds.size === items.length ? (
-                      <ChevronsUp size={14} />
-                    ) : (
-                      <ChevronsDown size={14} />
-                    )}
-                  </button>
-                  <span className="uppercase text-[10px] text-slate-400 tracking-wider">Estrutura (EAP)</span>
-                </div>
-                <span className="text-[10px] font-semibold text-slate-500 bg-white px-2 py-0.5 rounded-md border border-slate-200">
-                  {items.length} itens
-                </span>
-              </div>
-
-              <div className="flex-1 flex overflow-hidden">
-                {timeColumns.map((col, idx) => (
-                  <div
-                    key={idx}
-                    className={`flex-1 min-w-[65px] p-2 text-center border-r border-slate-200/70 last:border-r-0 truncate transition ${
-                      col.isToday ? 'bg-sky-50/90 border-b-2 border-b-sky-500' : ''
-                    }`}
-                  >
-                    <span className={`block text-[10px] uppercase tracking-tight ${col.isToday ? 'text-sky-700 font-black' : 'text-slate-400'}`}>
-                      {col.label}
-                    </span>
-                    <span className={`block text-[11px] font-black ${col.isToday ? 'text-sky-950 font-black' : 'text-slate-700'}`}>
-                      {col.subLabel}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Linhas da Árvore */}
-            <div className="flex-1 divide-y divide-slate-100">
-              {scheduleTree.length === 0 ? (
-                <div className="p-16 text-center text-xs text-slate-400">
-                  Nenhuma atividade corresponde aos filtros atuais.
-                </div>
-              ) : (
-                scheduleTree.map(rootNode => renderScheduleTree(rootNode, 0))
-              )}
-            </div>
-
-          </div>
-        </div>
-      </div>
-
-      {/* ======================================================== */}
-      {/* POPUP FLUTUANTE DE AÇÕES RÁPIDAS AO CLICAR EM ITEM OU SUBITEM */}
-      {/* ======================================================== */}
+      {/* POPUP DE AÇÕES DA TAREFA */}
       {actionTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/50 backdrop-blur-2xs animate-in fade-in duration-100">
           <div className="bg-white border border-slate-200 rounded-3xl p-5 max-w-sm w-full shadow-2xl space-y-3.5 animate-in zoom-in-95 duration-100 max-h-[92vh] overflow-y-auto">
             <div className="flex items-center justify-between pb-2 border-b border-slate-100">
               <div className="flex items-center gap-2 min-w-0">
                 {actionTarget.status === 'bloqueada' ? (
-                  <ShieldAlert size={16} className="text-rose-600 shrink-0" />
-                ) : actionTarget.isBlocked ? (
-                  <Lock size={16} className="text-amber-500 shrink-0" />
-                ) : actionTarget.type === 'item' ? (
-                  <Layers size={16} className="text-sky-600 shrink-0" />
+                  <ShieldAlert className="text-rose-600 shrink-0" size={16} />
                 ) : (
-                  <CheckSquare size={16} className="text-sky-600 shrink-0" />
+                  <Clock className="text-sky-600 shrink-0" size={16} />
                 )}
                 <h4 className="font-bold text-slate-900 text-sm truncate">{actionTarget.title}</h4>
               </div>
@@ -1425,24 +1764,15 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
 
             {actionTarget.status === 'bloqueada' && actionTarget.taskRef?.blocked_reason && (
               <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-xs flex items-start gap-2">
-                <ShieldAlert size={14} className="text-rose-600 shrink-0 mt-0.5" />
+                <ShieldAlert className="text-rose-600 shrink-0 mt-0.5" size={14} />
                 <span className="leading-snug">
-                  <strong>Restrição Manual:</strong> {actionTarget.taskRef.blocked_reason}
-                </span>
-              </div>
-            )}
-
-            {actionTarget.isBlocked && actionTarget.dependencyTitle && actionTarget.status !== 'bloqueada' && (
-              <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-xs flex items-start gap-2">
-                <Lock size={14} className="text-amber-600 shrink-0 mt-0.5" />
-                <span className="leading-snug">
-                  Atividade bloqueada por dependência. Aguardando a conclusão de: <strong>{actionTarget.dependencyTitle}</strong>.
+                  <strong>Restrição:</strong> {actionTarget.taskRef.blocked_reason}
                 </span>
               </div>
             )}
 
             <div className="space-y-1.5 text-xs">
-              {permissions.canEditSchedule && (
+              {canEditSchedule && (
                 <>
                   <button
                     type="button"
@@ -1453,7 +1783,7 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
                     }}
                     className="w-full flex items-center gap-2.5 p-2.5 rounded-xl hover:bg-sky-50 text-slate-700 font-semibold transition cursor-pointer text-left"
                   >
-                    <CalendarRange size={16} className="text-sky-600 shrink-0" />
+                    <CalendarRange className="text-sky-600 shrink-0" size={16} />
                     <div>
                       <span className="block text-slate-900 font-bold">Definir / Alterar Prazos</span>
                       <span className="text-[10px] text-slate-400 font-normal">
@@ -1470,72 +1800,69 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
                     }}
                     className="w-full flex items-center gap-2.5 p-2.5 rounded-xl hover:bg-sky-50 text-slate-700 font-semibold transition cursor-pointer text-left"
                   >
-                    <Link2 size={16} className="text-sky-600 shrink-0" />
+                    <Link2 className="text-sky-600 shrink-0" size={16} />
                     <div>
                       <span className="block text-slate-900 font-bold">Vincular Dependência</span>
                       <span className="text-[10px] text-slate-400 font-normal">
-                        {actionTarget.dependencyTitle ? `Vinculado a: ${actionTarget.dependencyTitle}` : 'Livre para execução (sem travas)'}
+                        {actionTarget.dependencyTitle ? `Vinculado a: ${actionTarget.dependencyTitle}` : 'Livre para execução'}
                       </span>
                     </div>
                   </button>
                 </>
               )}
 
-              {actionTarget.type === 'task' && actionTarget.taskRef && actionTarget.itemRef && (
+              {actionTarget.taskRef && actionTarget.itemRef && (
                 <>
-                  {/* AÇÕES DE BLOQUEIO / DESBLOQUEIO */}
                   {actionTarget.status === 'bloqueada' ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        handleUnblockTask(actionTarget.taskRef!);
-                        setActionTarget(null);
-                      }}
-                      className="w-full flex items-center gap-2.5 p-2.5 rounded-xl hover:bg-emerald-50 text-emerald-700 font-semibold transition cursor-pointer text-left"
-                    >
-                      <ShieldCheck size={16} className="text-emerald-600 shrink-0" />
-                      <div>
-                        <span className="block font-bold">Desbloquear Tarefa (Liberar)</span>
-                        <span className="text-[10px] text-emerald-600/70 font-normal">Remover restrição e permitir execução</span>
-                      </div>
-                    </button>
+                    canCompleteTasks && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          handleUnblockTask(actionTarget.taskRef!);
+                          setActionTarget(null);
+                        }}
+                        className="w-full flex items-center gap-2.5 p-2.5 rounded-xl hover:bg-emerald-50 text-emerald-700 font-semibold transition cursor-pointer text-left"
+                      >
+                        <ShieldCheck className="text-emerald-600 shrink-0" size={16} />
+                        <div>
+                          <span className="block font-bold">Desbloquear Tarefa</span>
+                          <span className="text-[10px] text-emerald-600/70 font-normal">Remover restrição operacional</span>
+                        </div>
+                      </button>
+                    )
                   ) : (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setBlockingTask(actionTarget.taskRef!);
-                        setActionTarget(null);
-                      }}
-                      className="w-full flex items-center gap-2.5 p-2.5 rounded-xl hover:bg-amber-50 text-amber-700 font-semibold transition cursor-pointer text-left"
-                    >
-                      <ShieldAlert size={16} className="text-amber-600 shrink-0" />
-                      <div>
-                        <span className="block font-bold">Bloquear (Com Restrição)</span>
-                        <span className="text-[10px] text-amber-600/70 font-normal">Marcar impedimentos operacionais</span>
-                      </div>
-                    </button>
+                    canCompleteTasks && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setBlockingTask(actionTarget.taskRef!);
+                          setActionTarget(null);
+                        }}
+                        className="w-full flex items-center gap-2.5 p-2.5 rounded-xl hover:bg-amber-50 text-amber-700 font-semibold transition cursor-pointer text-left"
+                      >
+                        <ShieldAlert className="text-amber-600 shrink-0" size={16} />
+                        <div>
+                          <span className="block font-bold">Bloquear (Com Restrição)</span>
+                          <span className="text-[10px] text-amber-600/70 font-normal">Marcar impedimentos</span>
+                        </div>
+                      </button>
+                    )
                   )}
 
-                  {/* AÇÕES DE CONCLUSÃO */}
                   {actionTarget.status !== 'bloqueada' && (
                     <button
                       type="button"
-                      disabled={
-                        actionTarget.isBlocked ||
-                        (actionTarget.status === 'concluida' ? !permissions.canReopenWorkTasks : !permissions.canCompleteWorkTasks)
-                      }
+                      disabled={actionTarget.status === 'concluida' ? !canReopenTasks : !canCompleteTasks}
                       onClick={() => handleToggleTaskStatus(actionTarget.taskRef!, actionTarget.itemRef!)}
                       className={`w-full flex items-center gap-2.5 p-2.5 rounded-xl font-semibold transition text-left ${
-                        actionTarget.isBlocked || (actionTarget.status === 'concluida' ? !permissions.canReopenWorkTasks : !permissions.canCompleteWorkTasks)
-                          ? 'opacity-50 cursor-not-allowed bg-slate-50 text-slate-400'
-                          : actionTarget.status === 'concluida'
-                          ? 'hover:bg-amber-50 text-amber-700 cursor-pointer'
-                          : 'hover:bg-emerald-50 text-emerald-700 cursor-pointer'
+                        actionTarget.status === 'concluida' 
+                          ? canReopenTasks ? 'hover:bg-amber-50 text-amber-700 cursor-pointer' : 'opacity-60 cursor-not-allowed'
+                          : canCompleteTasks ? 'hover:bg-emerald-50 text-emerald-700 cursor-pointer' : 'opacity-60 cursor-not-allowed'
                       }`}
                     >
                       {actionTarget.status === 'concluida' ? (
                         <>
-                          <Clock size={16} className="text-amber-600 shrink-0" />
+                          <Clock className="text-amber-600 shrink-0" size={16} />
                           <div>
                             <span className="block font-bold">Reabrir Tarefa</span>
                             <span className="text-[10px] text-slate-400 font-normal">Voltar para pendente</span>
@@ -1543,10 +1870,10 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
                         </>
                       ) : (
                         <>
-                          <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
+                          <CheckCircle2 className="text-emerald-600 shrink-0" size={16} />
                           <div>
                             <span className="block font-bold">Apontar / Concluir Tarefa</span>
-                            <span className="text-[10px] text-slate-400 font-normal">Registrar avanço no diário de obra</span>
+                            <span className="text-[10px] text-slate-400 font-normal">Registrar avanço físico</span>
                           </div>
                         </>
                       )}
@@ -1555,18 +1882,17 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
                 </>
               )}
 
-              {permissions.canEditSchedule && (actionTarget.start || actionTarget.due) && (
+              {canEditSchedule && (actionTarget.start || actionTarget.due) && (
                 <button
                   type="button"
                   onClick={async () => {
-                    const table = actionTarget.type === 'item' ? 'work_items' : 'work_tasks';
-                    await supabase.from(table).update({ start_date: null, due_date: null }).eq('id', actionTarget.id);
+                    await supabase.from('work_tasks').update({ start_date: null, due_date: null }).eq('id', actionTarget.id);
                     setActionTarget(null);
                     await loadScheduleData();
                   }}
                   className="w-full flex items-center gap-2.5 p-2.5 rounded-xl hover:bg-rose-50 text-rose-600 font-semibold transition cursor-pointer text-left"
                 >
-                  <Trash2 size={16} className="text-rose-500 shrink-0" />
+                  <Trash2 className="text-rose-500 shrink-0" size={16} />
                   <div>
                     <span className="block font-bold">Limpar Prazos</span>
                     <span className="text-[10px] text-slate-400 font-normal">Remover datas desta atividade</span>
@@ -1579,12 +1905,12 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
       )}
 
       {/* MODAL: AJUSTE RÁPIDO DE PRAZO */}
-      {isDatesModalOpen && actionTarget && permissions.canEditSchedule && (
+      {isDatesModalOpen && actionTarget && canEditSchedule && (
         <div className="fixed inset-0 z-[160] flex items-center justify-center p-3 sm:p-4 bg-slate-950/60 backdrop-blur-2xs animate-in fade-in duration-150">
           <div className="bg-white border border-slate-200 rounded-3xl p-5 sm:p-6 max-w-sm w-full shadow-2xl space-y-4 animate-in zoom-in-95 duration-150 max-h-[92vh] overflow-y-auto">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div className="flex items-center gap-2">
-                <CalendarRange size={18} className="text-sky-600" />
+                <CalendarRange className="text-sky-600" size={18} />
                 <h4 className="font-bold text-slate-900 text-sm">Definir Prazos</h4>
               </div>
               <button
@@ -1597,9 +1923,7 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
             </div>
 
             <div className="space-y-0.5">
-              <span className="text-[10px] text-slate-400 font-bold uppercase block">
-                {actionTarget.type === 'item' ? 'Componente' : 'Subitem / Tarefa'}
-              </span>
+              <span className="text-[10px] text-slate-400 font-bold uppercase block">Tarefa</span>
               <p className="text-xs font-bold text-slate-800 truncate">{actionTarget.title}</p>
             </div>
 
@@ -1615,7 +1939,7 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
               </div>
 
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">Data de Conclusão / Término</label>
+                <label className="block font-semibold text-slate-700 mb-1">Data de Término</label>
                 <input
                   type="date"
                   value={quickDueDate}
@@ -1638,7 +1962,7 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
                   disabled={savingQuickDates}
                   className="px-4 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded-xl font-bold shadow-xs flex items-center gap-1 cursor-pointer"
                 >
-                  {savingQuickDates ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
+                  {savingQuickDates ? <Loader2 className="animate-spin" size={13} /> : <Save size={13} />}
                   <span>Salvar Prazo</span>
                 </button>
               </div>
@@ -1648,12 +1972,12 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
       )}
 
       {/* MODAL: VINCULAR DEPENDÊNCIA */}
-      {isDependencyModalOpen && actionTarget && permissions.canEditSchedule && (
+      {isDependencyModalOpen && actionTarget && canEditSchedule && (
         <div className="fixed inset-0 z-[160] flex items-center justify-center p-3 sm:p-4 bg-slate-950/60 backdrop-blur-2xs animate-in fade-in duration-150">
           <div className="bg-white border border-slate-200 rounded-3xl p-5 sm:p-6 max-w-md w-full shadow-2xl space-y-4 animate-in zoom-in-95 duration-150 max-h-[92vh] overflow-y-auto">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div className="flex items-center gap-2">
-                <Link2 size={18} className="text-sky-600" />
+                <Link2 className="text-sky-600" size={18} />
                 <h4 className="font-bold text-slate-900 text-sm">Vincular Dependência</h4>
               </div>
               <button
@@ -1668,9 +1992,7 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
             <div className="space-y-0.5">
               <span className="text-[10px] text-slate-400 font-bold uppercase block">Travar Atividade</span>
               <p className="text-xs font-bold text-slate-800 truncate">
-                {actionTarget.type === 'item' 
-                  ? getHierarchyBreadcrumb(actionTarget.id) 
-                  : getHierarchyBreadcrumb(actionTarget.taskRef?.work_item_id, actionTarget.title)}
+                {getHierarchyBreadcrumb(actionTarget.taskRef?.work_item_id, actionTarget.title)}
               </p>
             </div>
 
@@ -1685,21 +2007,13 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
                   className="w-full px-2.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium cursor-pointer text-xs"
                 >
                   <option value="">Sem dependência (Livre para iniciar)</option>
-                  {actionTarget.type === 'item'
-                    ? items
-                        .filter(i => i.id !== actionTarget.id)
-                        .map(i => (
-                          <option key={i.id} value={i.id}>
-                            {getHierarchyBreadcrumb(i.id)} {i.code ? `(${i.code})` : ''}
-                          </option>
-                        ))
-                    : tasks
-                        .filter(t => t.id !== actionTarget.id)
-                        .map(t => (
-                          <option key={t.id} value={t.id}>
-                            {getHierarchyBreadcrumb(t.work_item_id, t.title)}
-                          </option>
-                        ))}
+                  {tasks
+                    .filter(t => t.id !== actionTarget.id)
+                    .map(t => (
+                      <option key={t.id} value={t.id}>
+                        {getHierarchyBreadcrumb(t.work_item_id, t.title)}
+                      </option>
+                    ))}
                 </select>
               </div>
 
@@ -1716,7 +2030,7 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
                   disabled={savingDependency}
                   className="px-4 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded-xl font-bold shadow-xs flex items-center gap-1 cursor-pointer"
                 >
-                  {savingDependency ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
+                  {savingDependency ? <Loader2 className="animate-spin" size={13} /> : <Save size={13} />}
                   <span>Salvar Trava</span>
                 </button>
               </div>
@@ -1726,13 +2040,13 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
       )}
 
       {/* MODAL: APONTAMENTO DIÁRIO DE EXECUÇÃO */}
-      {completingTask && (
+      {completingTask && canCompleteTasks && (
         <div className="fixed inset-0 z-[170] flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-xs animate-in fade-in duration-150">
           <div className="bg-white border border-slate-200 rounded-3xl w-full max-w-md p-4 sm:p-6 shadow-2xl space-y-4 animate-in zoom-in-95 duration-150 max-h-[92vh] flex flex-col">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100 shrink-0">
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded-xl bg-sky-50 flex items-center justify-center text-sky-600 border border-sky-100">
-                  <CheckSquare size={16} />
+                  <CheckCircle2 size={16} />
                 </div>
                 <div>
                   <h3 className="text-base font-bold text-slate-900 leading-tight">Apontamento de Execução</h3>
@@ -1740,6 +2054,7 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
                 </div>
               </div>
               <button
+                type="button"
                 onClick={() => setCompletingTask(null)}
                 className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer rounded-lg"
               >
@@ -1818,11 +2133,11 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
                 )}
               </div>
 
-              {/* SELEÇÃO DOS COLABORADORES DA OBRA */}
+              {/* SELEÇÃO DOS COLABORADORES */}
               <div className="pt-1">
                 <div className="flex items-center justify-between mb-1.5">
                   <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
-                    <UserCheck size={12} className="text-sky-600" />
+                    <UserCheck className="text-sky-600" size={12} />
                     <span>Quem executou esta tarefa?</span>
                     {selectedExecutors.length > 0 && (
                       <span className="text-sky-600 font-extrabold">({selectedExecutors.length})</span>
@@ -1850,11 +2165,7 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
                             <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold border overflow-hidden shrink-0 ${
                               isSelected ? 'bg-sky-600 text-white border-sky-500' : 'bg-slate-100 text-slate-600 border-slate-200'
                             }`}>
-                              {member.avatar_url ? (
-                                <img src={member.avatar_url} alt="" className="w-full h-full object-cover" />
-                              ) : (
-                                member.name.charAt(0).toUpperCase()
-                              )}
+                              {member.name.charAt(0).toUpperCase()}
                             </div>
                             <div className="min-w-0">
                               <span className="block text-xs truncate">{member.name}</span>
@@ -1862,7 +2173,7 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
                             </div>
                           </div>
 
-                          <UserCheck size={15} className={`shrink-0 ml-1 ${isSelected ? 'text-sky-600' : 'text-slate-300'}`} />
+                          <UserCheck className={`shrink-0 ml-1 ${isSelected ? 'text-sky-600' : 'text-slate-300'}`} size={15} />
                         </button>
                       );
                     })
@@ -1901,7 +2212,7 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
                 onClick={handleConfirmTaskCompletion}
                 className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold cursor-pointer shadow-2xs transition text-xs flex items-center gap-1.5 disabled:opacity-50"
               >
-                {isSavingEntry ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+                {isSavingEntry ? <Loader2 className="animate-spin" size={14} /> : <CheckCircle2 size={14} />}
                 <span>Salvar Apontamento</span>
               </button>
             </div>
@@ -1936,7 +2247,7 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
                   rows={3}
                   value={blockReason}
                   onChange={e => setBlockReason(e.target.value)}
-                  placeholder="Ex: Falta de material, aguardando aprovação do cliente..."
+                  placeholder="Ex: Falta de material, aguardando aprovação..."
                   className="w-full px-3 py-2 bg-rose-50/50 border border-rose-200 rounded-xl font-medium focus:ring-2 focus:ring-rose-500 resize-none text-slate-800"
                 />
               </div>
@@ -1955,7 +2266,7 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
                   onClick={handleConfirmBlockTask}
                   className="px-5 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-xl font-bold flex items-center gap-1.5 cursor-pointer shadow-2xs disabled:opacity-50"
                 >
-                  {isBlocking ? <Loader2 size={13} className="animate-spin" /> : <Lock size={13} />}
+                  {isBlocking ? <Loader2 className="animate-spin" size={13} /> : <Lock size={13} />}
                   Confirmar Restrição
                 </button>
               </div>
@@ -1963,6 +2274,17 @@ export const WorkScheduleTab: React.FC<WorkScheduleTabProps> = ({
           </div>
         </div>
       )}
+
+      {/* MODAL OFICIAL DE IMPRESSÃO */}
+      <WorkSchedulePrintModal
+        isOpen={isPrintModalOpen}
+        onClose={() => setIsPrintModalOpen(false)}
+        workTitle={workTitle}
+        workCode={workCode}
+        tasks={tasks}
+        allItems={items}
+        getHierarchyBreadcrumb={getHierarchyBreadcrumb}
+      />
 
     </div>
   );

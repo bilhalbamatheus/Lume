@@ -3,34 +3,35 @@ import { createPortal } from 'react-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissions } from '../hooks/usePermissions';
+import { WorkGeneralDataTab } from './WorkGeneralDataTab';
+import type { AssignedWorker } from './WorkGeneralDataTab';
 import { WorkItemsTasksTab } from './WorkItemsTasksTab';
 import { WorkScheduleTab } from './WorkScheduleTab';
 import { WorkCustomSettingsModal } from './WorkCustomSettingsModal';
 import { WorkOverviewTab } from './WorkOverviewTab';
 import { WorkFinancialTab } from './WorkFinancialTab';
+import WorkDailyLogsTab from './WorkDailyLogsTab';
 import { DailyWorkLogModal } from './DailyWorkLogModal';
 import {
   ArrowLeft,
-  Building2,
   CheckSquare,
   CalendarRange,
   DollarSign,
   Loader2,
   AlertCircle,
-  ExternalLink,
   MoreVertical,
   Edit3,
   Trash2,
   PauseCircle,
-  Briefcase,
   Save,
   X,
   Check,
   Settings,
   BookOpenCheck,
-  Star,
   LayoutDashboard,
-  ChevronDown
+  ChevronDown,
+  FileText,
+  ClipboardList
 } from 'lucide-react';
 
 export interface WorkDetailData {
@@ -76,14 +77,6 @@ export interface WorkDetailData {
   } | null;
 }
 
-interface AssignedWorker {
-  id: string;
-  full_name: string;
-  role_title?: string;
-  avatar_url?: string | null;
-  is_foreman?: boolean;
-}
-
 interface WorkDetailViewProps {
   workId: string;
   onBack: () => void;
@@ -91,13 +84,6 @@ interface WorkDetailViewProps {
   onOpenOpportunityModal?: (opportunityId: string) => void;
   onUpdated?: () => void;
 }
-
-const getInitials = (name: string) => {
-  if (!name) return 'EX';
-  const parts = name.trim().split(' ');
-  if (parts.length === 1) return parts[0].substring(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-};
 
 export const WorkDetailView: React.FC<WorkDetailViewProps> = ({
   workId,
@@ -138,11 +124,13 @@ export const WorkDetailView: React.FC<WorkDetailViewProps> = ({
     };
   }, [isMobile]);
 
-  // Colaboradores Alocados na Obra
+  // Colaboradores alocados
   const [assignedWorkers, setAssignedWorkers] = useState<AssignedWorker[]>([]);
-  const [activeTab, setActiveTab] = useState<'dados' | 'items_tasks' | 'overview' | 'schedule' | 'financial'>('items_tasks');
 
-  // Menus suspensos e Action Sheet Mobile
+  // Abas de Navegação
+  const [activeTab, setActiveTab] = useState<'dados' | 'overview' | 'items' | 'schedule' | 'daily_logs' | 'financial'>('dados');
+
+  // Menus
   const [isActionsMenuOpen, setIsActionsMenuOpen] = useState(false);
   const [isMobileActionSheetOpen, setIsMobileActionSheetOpen] = useState(false);
   const actionsMenuRef = useRef<HTMLDivElement>(null);
@@ -287,10 +275,45 @@ export const WorkDetailView: React.FC<WorkDetailViewProps> = ({
 
       if (error) throw error;
 
+      // Cálculo Dinâmico de Progresso para evitar valores zerados
+      let calculatedProgress = data.progress_percent || 0;
+      const { data: itemRecords } = await supabase
+        .from('work_items')
+        .select('id')
+        .eq('work_id', workId);
+
+      const itemIds = (itemRecords || []).map(i => i.id);
+      if (itemIds.length > 0) {
+        const { data: taskRecords } = await supabase
+          .from('work_tasks')
+          .select('status, has_progress_tracking, quantity_planned, quantity_executed')
+          .in('work_item_id', itemIds);
+
+        if (taskRecords && taskRecords.length > 0) {
+          let score = 0;
+          taskRecords.forEach(t => {
+            if (t.status === 'concluida') {
+              score += 1;
+            } else if (t.has_progress_tracking && t.quantity_planned > 0) {
+              score += Math.min(1, (t.quantity_executed || 0) / t.quantity_planned);
+            }
+          });
+          calculatedProgress = Math.round((score / taskRecords.length) * 100);
+
+          if (calculatedProgress !== data.progress_percent) {
+            await supabase
+              .from('works')
+              .update({ progress_percent: calculatedProgress })
+              .eq('id', workId);
+          }
+        }
+      }
+
       const oppObj = Array.isArray(data.opportunity) ? data.opportunity[0] : data.opportunity;
 
       setWork({
         ...data,
+        progress_percent: calculatedProgress,
         contact: Array.isArray(data.contact) ? data.contact[0] : data.contact,
         assignee: Array.isArray(data.assignee) ? data.assignee[0] : data.assignee,
         opportunity: oppObj ? {
@@ -468,15 +491,12 @@ export const WorkDetailView: React.FC<WorkDetailViewProps> = ({
     (work as any).budget_amount ||
     0;
 
-  const foremenList = assignedWorkers.filter(w => w.is_foreman);
-
-  // RENDERIZAÇÃO DO CONTEÚDO PRINCIPAL
   const mainContent = (
     <div className={`bg-slate-100 flex flex-col overflow-hidden animate-in fade-in duration-150 ${
       isMobile ? 'fixed inset-0 z-[150] w-screen h-screen' : 'absolute inset-0'
     }`}>
       
-      {/* 1. TOPBAR DEDICADA MOBILE (< lg): Cobre 100% da barra do app */}
+      {/* 1. TOPBAR MOBILE */}
       <div className="flex lg:hidden items-center justify-between px-3.5 py-2.5 bg-white border-b border-slate-200/90 shrink-0 z-30 shadow-2xs">
         <button
           type="button"
@@ -487,7 +507,7 @@ export const WorkDetailView: React.FC<WorkDetailViewProps> = ({
           <ArrowLeft size={16} />
         </button>
 
-        <span className="text-xs font-bold text-slate-800 tracking-tight uppercase">
+        <span className="text-xs font-black text-slate-800 tracking-tight uppercase">
           Detalhes da Obra
         </span>
 
@@ -501,7 +521,7 @@ export const WorkDetailView: React.FC<WorkDetailViewProps> = ({
         </button>
       </div>
 
-      {/* 2. BLOCO DE IDENTIFICAÇÃO NO MOBILE: Título, Código, Status e Etapa */}
+      {/* 2. BLOCO DE IDENTIFICAÇÃO NO MOBILE */}
       <div className="lg:hidden bg-white px-4 py-3 border-b border-slate-200/80 shrink-0 space-y-2">
         <div className="flex items-start justify-between gap-2">
           <div className="space-y-1 min-w-0">
@@ -534,7 +554,6 @@ export const WorkDetailView: React.FC<WorkDetailViewProps> = ({
             </div>
           </div>
 
-          {/* Etapa compacta no mobile */}
           <div className="relative shrink-0" ref={stageMenuRef}>
             <button
               type="button"
@@ -551,22 +570,20 @@ export const WorkDetailView: React.FC<WorkDetailViewProps> = ({
         </div>
       </div>
 
-      {/* 3. CABEÇALHO DESKTOP (lg+) */}
+      {/* 3. CABEÇALHO DESKTOP COMPACTO */}
       <header className="hidden lg:block bg-white border-b border-slate-200/90 px-6 py-3.5 shrink-0 shadow-2xs z-30">
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center justify-between gap-4">
           
-          <div className="space-y-1.5 min-w-0">
-            <h1 className="text-xl sm:text-2xl font-black text-slate-900 leading-tight truncate">
-              {work.title}
-            </h1>
-
-            <div className="flex items-center gap-2 flex-wrap">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <h1 className="text-xl font-black text-slate-900 leading-tight truncate">
+                {work.title}
+              </h1>
               {work.code && (
                 <span className="font-mono text-[11px] font-bold text-sky-700 bg-sky-50 border border-sky-200 px-2 py-0.5 rounded-lg shrink-0">
                   {work.code}
                 </span>
               )}
-
               <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border shrink-0 ${
                 work.status === 'concluida'
                   ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
@@ -587,10 +604,10 @@ export const WorkDetailView: React.FC<WorkDetailViewProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-2.5 shrink-0">
             
-            {/* ETAPA DA OBRA COM SELETOR COMPACTO */}
-            <div className="relative">
+            {/* Seletor de Etapa */}
+            <div className="relative" ref={stageMenuRef}>
               <button
                 type="button"
                 disabled={updatingStage || !permissions.canEditWorkDetails}
@@ -639,12 +656,12 @@ export const WorkDetailView: React.FC<WorkDetailViewProps> = ({
               )}
             </div>
 
-            {/* MENU DE OPÇÕES GERAIS (...) */}
+            {/* Menu (...) */}
             <div className="relative" ref={actionsMenuRef}>
               <button
                 type="button"
                 onClick={() => setIsActionsMenuOpen(!isActionsMenuOpen)}
-                className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl border border-slate-200 transition cursor-pointer shadow-2xs"
+                className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl border border-slate-200 transition cursor-pointer shadow-2xs"
                 title="Mais opções"
               >
                 <MoreVertical size={16} />
@@ -711,446 +728,166 @@ export const WorkDetailView: React.FC<WorkDetailViewProps> = ({
               )}
             </div>
 
-            {/* BOTÃO DE FECHAR (X) */}
+            {/* Fechar (X) */}
             <button
               type="button"
               onClick={onBack}
-              className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition cursor-pointer ml-1"
-              title="Fechar janela"
+              className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition cursor-pointer"
+              title="Fechar detalhes da obra"
             >
-              <X size={18} />
+              <X size={20} />
             </button>
 
           </div>
         </div>
       </header>
 
-      {/* 4. BARRA DE NAVEGAÇÃO DE ABAS NO MOBILE (< lg): SEM A ABA FINANCEIRO */}
-      <div className="flex lg:hidden bg-white border-b border-slate-200/90 px-3 shrink-0 overflow-x-auto no-scrollbar shadow-2xs">
-        <button
-          type="button"
-          onClick={() => setActiveTab('dados')}
-          className={`py-3 px-3 border-b-2 text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
-            activeTab === 'dados' ? 'border-sky-600 text-sky-700' : 'border-transparent text-slate-500'
-          }`}
-        >
-          <Briefcase size={14} />
-          <span>Dados</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('items_tasks')}
-          className={`py-3 px-3 border-b-2 text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
-            activeTab === 'items_tasks' ? 'border-sky-600 text-sky-700' : 'border-transparent text-slate-500'
-          }`}
-        >
-          <CheckSquare size={14} />
-          <span>Itens e Tarefas</span>
-        </button>
-
-        {permissions.canViewSchedule && (
+      {/* 4. BARRA DE NAVEGAÇÃO DAS ABAS (COM A ABA DIÁRIOS) */}
+      <div className="bg-white border-b border-slate-200/90 px-4 sm:px-6 shrink-0 overflow-x-auto no-scrollbar shadow-2xs">
+        <div className="flex items-center gap-4 sm:gap-6 text-xs font-bold">
+          
           <button
             type="button"
-            onClick={() => setActiveTab('schedule')}
-            className={`py-3 px-3 border-b-2 text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
-              activeTab === 'schedule' ? 'border-sky-600 text-sky-700' : 'border-transparent text-slate-500'
+            onClick={() => setActiveTab('dados')}
+            className={`py-3 sm:py-3.5 border-b-2 transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
+              activeTab === 'dados' ? 'border-sky-600 text-sky-700' : 'border-transparent text-slate-500 hover:text-slate-800'
             }`}
           >
-            <CalendarRange size={14} />
-            <span>Cronograma</span>
+            <FileText size={15} />
+            <span>Dados gerais</span>
           </button>
-        )}
 
-        <button
-          type="button"
-          onClick={() => setActiveTab('overview')}
-          className={`py-3 px-3 border-b-2 text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
-            activeTab === 'overview' ? 'border-sky-600 text-sky-700' : 'border-transparent text-slate-500'
-          }`}
-        >
-          <LayoutDashboard size={14} />
-          <span>Visão Geral</span>
-        </button>
-      </div>
+          <button
+            type="button"
+            onClick={() => setActiveTab('overview')}
+            className={`py-3 sm:py-3.5 border-b-2 transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
+              activeTab === 'overview' ? 'border-sky-600 text-sky-700' : 'border-transparent text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <LayoutDashboard size={15} />
+            <span>Visão geral</span>
+          </button>
 
-      {/* 5. CORPO: MASTER-DETAIL (COLUNA ESQUERDA + PAINEL DIREITO) */}
-      <div className="flex-1 flex flex-col lg:flex-row min-h-0 overflow-y-auto lg:overflow-hidden">
-        
-        {/* COLUNA LATERAL ESQUERDA (lg:w-[400px]) */}
-        <aside className={`w-full lg:w-[400px] bg-white border-b lg:border-b-0 lg:border-r border-slate-200/90 flex flex-col shrink-0 overflow-y-auto p-4 sm:p-5 space-y-3.5 ${
-          activeTab !== 'dados' ? 'hidden lg:flex' : 'flex'
-        }`}>
-          
-          {/* Card de Valores e Avanço Físico */}
-          <div className="p-4 bg-slate-50/70 border border-slate-200/80 rounded-2xl space-y-3">
-            <div className="grid grid-cols-2 gap-2.5">
-              <div className="p-2.5 bg-white rounded-xl border border-slate-200/80">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                  Valor Contratado
-                </span>
-                <strong className="text-xs sm:text-sm font-extrabold text-slate-800 font-mono">
-                  {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(resolvedContractAmount)}
-                </strong>
-              </div>
+          <button
+            type="button"
+            onClick={() => setActiveTab('items')}
+            className={`py-3 sm:py-3.5 border-b-2 transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
+              activeTab === 'items' ? 'border-sky-600 text-sky-700' : 'border-transparent text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <CheckSquare size={15} />
+            <span>Itens</span>
+          </button>
 
-              <div className="p-2.5 bg-white rounded-xl border border-slate-200/80">
-                <span className="text-[10px] font-bold text-sky-600 uppercase tracking-wider block">
-                  Avanço Geral
-                </span>
-                <strong className="text-xs sm:text-sm font-extrabold text-sky-700 font-mono">
-                  {Math.round(work.progress_percent || 0)}%
-                </strong>
-              </div>
-            </div>
-
-            {/* Barra de Progresso Físico */}
-            <div className="space-y-1">
-              <div className="w-full bg-slate-200/80 rounded-full h-2 overflow-hidden">
-                <div
-                  className={`h-2 rounded-full transition-all duration-300 ${
-                    work.progress_percent >= 100 ? 'bg-emerald-500' : 'bg-sky-500'
-                  }`}
-                  style={{ width: `${Math.min(100, Math.max(0, work.progress_percent || 0))}%` }}
-                />
-              </div>
-              <div className="flex justify-between text-[10px] text-slate-400 font-semibold">
-                <span>0%</span>
-                <span>Meta: 100%</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Dados Operacionais da Obra */}
-          <div className="p-3.5 bg-slate-50/70 border border-slate-200/80 rounded-2xl space-y-2 text-xs">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-              Dados Operacionais
-            </span>
-
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <span className="text-slate-500">Início Previsto:</span>
-                <span className="font-semibold text-slate-800">
-                  {work.start_date ? new Date(work.start_date + 'T00:00:00').toLocaleDateString('pt-BR') : 'Não definido'}
-                </span>
-              </div>
-
-              <div className="flex items-center justify-between">
-                <span className="text-slate-500">Previsão Conclusão:</span>
-                <span className="font-semibold text-slate-800">
-                  {work.estimated_completion_date ? new Date(work.estimated_completion_date + 'T00:00:00').toLocaleDateString('pt-BR') : 'Não definida'}
-                </span>
-              </div>
-
-              <div className="flex items-center justify-between">
-                <span className="text-slate-500">Regra de Medição:</span>
-                <span className="font-semibold text-slate-800">
-                  {work.measurement_type === 'por_subitem' ? 'Por Subitem (Tarefa)' : work.measurement_type === 'por_item' ? 'Por Item (Macro)' : 'Contrato Fechado'}
-                </span>
-              </div>
-
-              {work.opportunity?.service_type && (
-                <div className="flex items-center justify-between">
-                  <span className="text-slate-500">Tipo de Serviço:</span>
-                  <span className="font-semibold text-slate-800">{work.opportunity.service_type}</span>
-                </div>
-              )}
-
-              {work.notes && (
-                <div className="pt-2 border-t border-slate-200/60">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
-                    Observações Operacionais
-                  </span>
-                  <p className="text-slate-600 leading-relaxed bg-white p-2.5 rounded-xl border border-slate-200/70 whitespace-pre-line text-[11px]">
-                    {work.notes}
-                  </p>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Cliente / Contratante */}
-          <div className="p-3.5 bg-slate-50/70 border border-slate-200/80 rounded-2xl space-y-2 text-xs">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-              Cliente / Contratante
-            </span>
-
-            {work.contact ? (
-              <div
-                onClick={() => work.contact?.id && onOpenContactModal?.(work.contact.id)}
-                className="p-2.5 bg-white rounded-xl border border-slate-200/80 hover:border-sky-300 hover:shadow-2xs transition flex items-center justify-between gap-2.5 cursor-pointer group"
-              >
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <div className="w-8 h-8 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center font-bold text-xs shrink-0 border border-slate-200 group-hover:scale-105 transition-transform">
-                    {work.contact.avatar_url ? (
-                      <img src={work.contact.avatar_url} alt="" className="w-full h-full object-cover rounded-xl" />
-                    ) : work.contact.type === 'company' ? (
-                      <Building2 size={16} />
-                    ) : (
-                      work.contact.display_name.slice(0, 2).toUpperCase()
-                    )}
-                  </div>
-                  <div className="min-w-0">
-                    <strong className="block text-xs font-bold text-slate-900 group-hover:text-sky-600 transition truncate">
-                      {work.contact.display_name}
-                    </strong>
-                    <span className="text-[10px] text-slate-400 truncate block">
-                      {work.contact.type === 'company' ? 'Pessoa Jurídica' : 'Pessoa Física'}
-                    </span>
-                  </div>
-                </div>
-                <ExternalLink size={13} className="text-slate-400 group-hover:text-sky-600 shrink-0" />
-              </div>
-            ) : (
-              <p className="text-slate-400 italic">Nenhum cliente vinculado.</p>
-            )}
-          </div>
-
-          {/* Negociação de Origem */}
-          {work.opportunity && (
-            <div className="p-3.5 bg-slate-50/70 border border-slate-200/80 rounded-2xl space-y-2 text-xs">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                Negociação de Origem
-              </span>
-
-              <div
-                onClick={() => work.opportunity?.id && onOpenOpportunityModal?.(work.opportunity.id)}
-                className="p-2.5 bg-white rounded-xl border border-slate-200/80 hover:border-emerald-300 hover:shadow-2xs transition flex items-center justify-between gap-2.5 cursor-pointer group"
-              >
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <div className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0 border border-slate-200 group-hover:scale-105 transition-transform">
-                    <Briefcase size={16} />
-                  </div>
-                  <div className="min-w-0">
-                    <strong className="block text-xs font-bold text-slate-900 group-hover:text-emerald-700 transition truncate">
-                      {work.opportunity.title}
-                    </strong>
-                    <span className="text-[10px] text-slate-400 font-mono truncate block">
-                      {work.opportunity.code || 'Sem código comercial'}
-                    </span>
-                  </div>
-                </div>
-                <ExternalLink size={13} className="text-slate-400 group-hover:text-emerald-600 shrink-0" />
-              </div>
-            </div>
+          {permissions.canViewSchedule && (
+            <button
+              type="button"
+              onClick={() => setActiveTab('schedule')}
+              className={`py-3 sm:py-3.5 border-b-2 transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
+                activeTab === 'schedule' ? 'border-sky-600 text-sky-700' : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <CalendarRange size={15} />
+              <span>Cronograma</span>
+            </button>
           )}
 
-          {/* Liderança da Obra: Engenheiro e Encarregados */}
-          <div className="p-3.5 bg-slate-50/70 border border-slate-200/80 rounded-2xl space-y-3 text-xs">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-              Liderança da Obra
-            </span>
+          {/* NOVA ABA: DIÁRIOS DE OBRA */}
+          <button
+            type="button"
+            onClick={() => setActiveTab('daily_logs')}
+            className={`py-3 sm:py-3.5 border-b-2 transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
+              activeTab === 'daily_logs' ? 'border-sky-600 text-sky-700' : 'border-transparent text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <ClipboardList size={15} />
+            <span>Diários</span>
+          </button>
 
-            {/* Responsável Técnico */}
-            <div className="flex items-center justify-between p-2 rounded-xl hover:bg-white/80 transition-colors">
-              <span className="text-slate-500 font-medium">Responsável Técnico:</span>
-              <div className="flex items-center gap-1.5 font-bold text-slate-800">
-                <div className="w-5 h-5 rounded-full overflow-hidden bg-sky-100 text-sky-800 text-[8px] font-bold flex items-center justify-center shrink-0 border border-slate-200">
-                  {work.assignee?.avatar_url ? (
-                    <img src={work.assignee.avatar_url} alt="" className="w-full h-full object-cover" />
-                  ) : (
-                    work.assignee?.full_name?.charAt(0).toUpperCase() || 'T'
-                  )}
-                </div>
-                <span className="truncate max-w-[130px]">{work.assignee?.full_name || 'Não atribuído'}</span>
-              </div>
-            </div>
+          {permissions.canViewWorkFinancial && (
+            <button
+              type="button"
+              onClick={() => setActiveTab('financial')}
+              className={`py-3 sm:py-3.5 border-b-2 transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
+                activeTab === 'financial' ? 'border-sky-600 text-sky-700' : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <DollarSign size={15} />
+              <span>Financeiro</span>
+            </button>
+          )}
 
-            {/* Lista de Encarregados */}
-            <div className="pt-2 border-t border-slate-200/60 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-slate-500 font-medium flex items-center gap-1">
-                  <Star size={12} className="text-amber-500 fill-amber-500" />
-                  {foremenList.length > 1 ? `Encarregados (${foremenList.length}):` : 'Encarregado:'}
-                </span>
-                {foremenList.length === 0 && (
-                  <span className="text-slate-400 font-normal italic">Não definido</span>
-                )}
-              </div>
-
-              {foremenList.length > 0 && (
-                <div className="space-y-1.5">
-                  {foremenList.map((foreman) => (
-                    <div 
-                      key={foreman.id}
-                      className="p-2 rounded-xl bg-amber-50/80 border border-amber-200/80 flex items-center justify-between gap-2 hover:bg-amber-100/70 transition-colors"
-                    >
-                      <div className="flex items-center gap-2 min-w-0">
-                        <div className="w-6 h-6 rounded-full overflow-hidden bg-amber-500 text-white text-[9px] font-bold flex items-center justify-center shrink-0 shadow-2xs">
-                          {foreman.avatar_url ? (
-                            <img src={foreman.avatar_url} alt="" className="w-full h-full object-cover" />
-                          ) : (
-                            foreman.full_name.charAt(0).toUpperCase()
-                          )}
-                        </div>
-                        <div className="min-w-0">
-                          <p className="font-bold text-amber-950 truncate leading-tight">{foreman.full_name}</p>
-                          <p className="text-[10px] text-amber-700 truncate">{foreman.role_title || 'Encarregado'}</p>
-                        </div>
-                      </div>
-                      <span className="inline-flex items-center gap-0.5 text-[9px] font-extrabold bg-amber-500 text-white px-1.5 py-0.5 rounded-md shadow-2xs shrink-0">
-                        <Star size={9} className="fill-white" /> Líder
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Equipe Alocada (Miniatura) */}
-          <div className="p-3.5 bg-slate-50/70 border border-slate-200/80 rounded-2xl space-y-2 text-xs">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                Equipe Alocada ({assignedWorkers.length})
-              </span>
-              {permissions.canCustomizeSystem && (
-                <button
-                  type="button"
-                  onClick={() => setIsCustomSettingsOpen(true)}
-                  className="text-[11px] font-bold text-sky-600 hover:text-sky-700 hover:underline cursor-pointer"
-                >
-                  Gerenciar
-                </button>
-              )}
-            </div>
-
-            {assignedWorkers.length === 0 ? (
-              <p className="text-slate-400 italic text-[11px]">Nenhum colaborador alocado nesta obra.</p>
-            ) : (
-              <div className="flex items-center gap-2 pt-1">
-                <div className="flex -space-x-2 overflow-hidden">
-                  {assignedWorkers.slice(0, 5).map((w) => (
-                    <div
-                      key={w.id}
-                      className="inline-block h-7 w-7 rounded-full ring-2 ring-white overflow-hidden bg-sky-100 text-sky-800 text-[9px] font-bold flex items-center justify-center shrink-0 shadow-2xs hover:scale-110 hover:z-10 transition-transform cursor-pointer"
-                      title={`${w.full_name} (${w.role_title || 'Colaborador'})`}
-                    >
-                      {w.avatar_url ? (
-                        <img src={w.avatar_url} alt="" className="h-full w-full object-cover" />
-                      ) : (
-                        getInitials(w.full_name)
-                      )}
-                    </div>
-                  ))}
-                  {assignedWorkers.length > 5 && (
-                    <div className="inline-flex h-7 w-7 rounded-full ring-2 ring-white bg-slate-200 text-slate-600 text-[10px] font-extrabold items-center justify-center shadow-2xs">
-                      +{assignedWorkers.length - 5}
-                    </div>
-                  )}
-                </div>
-                <span className="text-[11px] font-semibold text-slate-600">
-                  {assignedWorkers.length} no canteiro
-                </span>
-              </div>
-            )}
-          </div>
-
-        </aside>
-
-        {/* PAINEL PRINCIPAL À DIREITA: ABAS DE EXECUÇÃO */}
-        <main className={`flex-1 flex flex-col min-w-0 bg-slate-50/60 overflow-hidden ${
-          activeTab === 'dados' ? 'hidden lg:flex' : 'flex'
-        }`}>
-          
-          {/* Navegação de Abas no Desktop */}
-          <div className="hidden lg:flex px-6 bg-white border-b border-slate-200/90 items-center justify-between shrink-0 shadow-2xs">
-            <div className="flex items-center gap-6 text-xs font-bold">
-              <button
-                type="button"
-                onClick={() => setActiveTab('items_tasks')}
-                className={`py-3.5 border-b-2 transition flex items-center gap-2 cursor-pointer ${
-                  activeTab === 'items_tasks' ? 'border-sky-600 text-sky-700' : 'border-transparent text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                <CheckSquare size={15} />
-                <span>Itens e Tarefas (EAP)</span>
-              </button>
-
-              {permissions.canViewSchedule && (
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('schedule')}
-                  className={`py-3.5 border-b-2 transition flex items-center gap-2 cursor-pointer ${
-                    activeTab === 'schedule' ? 'border-sky-600 text-sky-700' : 'border-transparent text-slate-500 hover:text-slate-800'
-                  }`}
-                >
-                  <CalendarRange size={15} />
-                  <span>Cronograma</span>
-                </button>
-              )}
-
-              {permissions.canViewWorkFinancial && (
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('financial')}
-                  className={`py-3.5 border-b-2 transition flex items-center gap-2 cursor-pointer ${
-                    activeTab === 'financial' ? 'border-sky-600 text-sky-700' : 'border-transparent text-slate-500 hover:text-slate-800'
-                  }`}
-                >
-                  <DollarSign size={15} />
-                  <span>Financeiro & Medição</span>
-                </button>
-              )}
-
-              <button
-                type="button"
-                onClick={() => setActiveTab('overview')}
-                className={`py-3.5 border-b-2 transition flex items-center gap-2 cursor-pointer ${
-                  activeTab === 'overview' ? 'border-sky-600 text-sky-700' : 'border-transparent text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                <LayoutDashboard size={15} />
-                <span>Visão Geral & Notas</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Conteúdo das Abas */}
-          <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-5">
-            {activeTab === 'items_tasks' && (
-              <WorkItemsTasksTab
-                workId={work.id}
-                measurementType={work.measurement_type}
-                onProgressUpdated={(newProg) => {
-                  setWork(prev => prev ? { ...prev, progress_percent: newProg } : null);
-                  onUpdated?.();
-                }}
-              />
-            )}
-
-            {activeTab === 'schedule' && permissions.canViewSchedule && (
-              <WorkScheduleTab workId={work.id} />
-            )}
-
-            {activeTab === 'financial' && permissions.canViewWorkFinancial && (
-              <WorkFinancialTab 
-                workId={work.id}
-                contractAmount={resolvedContractAmount}
-                measurementType={work.measurement_type || 'por_subitem'}
-              />
-            )}
-
-            {activeTab === 'overview' && (
-              <WorkOverviewTab 
-                workId={work.id}
-                contractAmount={resolvedContractAmount}
-                startDate={work.start_date}
-                targetDate={work.estimated_completion_date}
-                initialNotes={work.notes}
-                onNavigateTab={(tab) => {
-                  if (tab === 'items') setActiveTab('items_tasks');
-                  else if (tab === 'finance' && permissions.canViewWorkFinancial) setActiveTab('financial');
-                  else if (tab === 'schedule' && permissions.canViewSchedule) setActiveTab('schedule');
-                  else setActiveTab(tab as any);
-                }}
-              />
-            )}
-          </div>
-        </main>
+        </div>
       </div>
 
-      {/* ACTION SHEET MOBILE: ABERTO PELO MENU (...) DA TOPBAR */}
+      {/* 5. CORPO COM O CONTEÚDO DAS ABAS EM LARGURA TOTAL */}
+      <main className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 bg-slate-50/70">
+        
+        {activeTab === 'dados' && (
+          <WorkGeneralDataTab
+            work={work}
+            assignedWorkers={assignedWorkers}
+            canCustomizeSystem={permissions.canCustomizeSystem}
+            onOpenContactModal={onOpenContactModal}
+            onOpenOpportunityModal={onOpenOpportunityModal}
+            onOpenSettings={() => setIsCustomSettingsOpen(true)}
+          />
+        )}
+
+        {activeTab === 'overview' && (
+          <WorkOverviewTab 
+            workId={work.id}
+            contractAmount={resolvedContractAmount}
+            startDate={work.start_date}
+            targetDate={work.estimated_completion_date}
+            initialNotes={work.notes}
+            onNavigateTab={(tab) => {
+              if (tab === 'items') setActiveTab('items');
+              else if (tab === 'finance' && permissions.canViewWorkFinancial) setActiveTab('financial');
+              else if (tab === 'schedule' && permissions.canViewSchedule) setActiveTab('schedule');
+              else setActiveTab(tab as any);
+            }}
+          />
+        )}
+
+        {activeTab === 'items' && (
+          <WorkItemsTasksTab
+            workId={work.id}
+            measurementType={work.measurement_type}
+            onProgressUpdated={(newProg) => {
+              setWork(prev => prev ? { ...prev, progress_percent: newProg } : null);
+              onUpdated?.();
+            }}
+          />
+        )}
+
+        {activeTab === 'schedule' && permissions.canViewSchedule && (
+          <WorkScheduleTab 
+            workId={work.id} 
+            workTitle={work.title}
+            workCode={work.code}
+          />
+        )}
+
+        {/* RENDERIZAÇÃO DA ABA DIÁRIOS */}
+        {activeTab === 'daily_logs' && (
+          <WorkDailyLogsTab 
+            workId={work.id}
+            onOpenNewLog={() => setIsDailyLogModalOpen(true)}
+          />
+        )}
+
+        {activeTab === 'financial' && permissions.canViewWorkFinancial && (
+          <WorkFinancialTab 
+            workId={work.id}
+            contractAmount={resolvedContractAmount}
+            measurementType={work.measurement_type || 'por_subitem'}
+          />
+        )}
+
+      </main>
+
+      {/* ACTION SHEET MOBILE (...) */}
       {isMobileActionSheetOpen && (
         <div className="lg:hidden fixed inset-0 z-[180] flex flex-col justify-end bg-slate-950/70 backdrop-blur-xs animate-in fade-in duration-150">
           <div 
@@ -1165,7 +902,6 @@ export const WorkDetailView: React.FC<WorkDetailViewProps> = ({
               Opções da Obra
             </h3>
 
-            {/* Mudança de Etapa Rápida Mobile */}
             {permissions.canEditWorkDetails && stages.length > 0 && (
               <div className="pb-3 border-b border-slate-100 space-y-1.5">
                 <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">

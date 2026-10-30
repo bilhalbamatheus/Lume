@@ -9,9 +9,16 @@ import {
   Loader2,
   Trash2,
   CheckSquare,
-  Square,
   BookOpenCheck,
-  UserCheck} from 'lucide-react';
+  UserCheck,
+  RotateCcw,
+  MessageSquare,
+  PlayCircle,
+  Check,
+  UserX,
+  ChevronDown,
+  ChevronUp
+} from 'lucide-react';
 import type { WorkItem, WorkTask } from './WorkItemRow';
 
 interface DailyWorkLogModalProps {
@@ -25,7 +32,9 @@ interface TaskEntryState {
   tempId: string;
   task: WorkTask;
   quantity: string;
-  isComplete: boolean;
+  actionType: 'progress' | 'complete';
+  isRework: boolean;
+  itemNotes: string;
   executors: string[];
 }
 
@@ -61,8 +70,14 @@ export const DailyWorkLogModal: React.FC<DailyWorkLogModalProps> = ({
   const [workItems, setWorkItems] = useState<WorkItem[]>([]);
   const [workTasks, setWorkTasks] = useState<WorkTask[]>([]);
   
-  // Colaboradores alocados nesta obra (work_members)
+  // Colaboradores aptos alocados na obra
   const [availableWorkers, setAvailableWorkers] = useState<AssignedWorkerInfo[]>([]);
+
+  // Colaboradores PRESENTES no canteiro hoje (nomes selecionados)
+  const [presentWorkers, setPresentWorkers] = useState<Set<string>>(new Set());
+
+  // Controle de colapso do card de presença no mobile
+  const [isMobilePresenceOpen, setIsMobilePresenceOpen] = useState(false);
 
   // Tarefas adicionadas ao diário
   const [entries, setEntries] = useState<TaskEntryState[]>([]);
@@ -89,7 +104,7 @@ export const DailyWorkLogModal: React.FC<DailyWorkLogModalProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Carregar dados da obra (Itens, Tarefas e Colaboradores Alocados via work_members)
+  // Carregar dados da obra
   const loadWorkData = useCallback(async () => {
     const companyId = user?.company?.id;
     if (!companyId || !selectedWorkId) return;
@@ -107,7 +122,7 @@ export const DailyWorkLogModal: React.FC<DailyWorkLogModalProps> = ({
           .from('work_tasks')
           .select('*')
           .eq('company_id', companyId)
-          .eq('status', 'pendente') // busca tarefas pendentes e em andamento
+          .neq('status', 'concluida')
           .order('created_at', { ascending: true }),
         supabase
           .from('work_members')
@@ -139,7 +154,6 @@ export const DailyWorkLogModal: React.FC<DailyWorkLogModalProps> = ({
       const itemsList = (itemsRes.data as any) || [];
       setWorkItems(itemsList);
 
-      // Filtrar apenas tarefas pertencentes aos itens desta obra
       const validItemIds = new Set(itemsList.map((i: any) => i.id));
       const filteredTasks = (tasksRes.data || []).filter((t: any) => validItemIds.has(t.work_item_id));
       setWorkTasks((filteredTasks as any) || []);
@@ -158,24 +172,21 @@ export const DailyWorkLogModal: React.FC<DailyWorkLogModalProps> = ({
         }
       });
 
-      // 2. Fallback caso a obra ainda não tenha colaboradores vinculados
-      if (assignedList.length > 0) {
-        setAvailableWorkers(assignedList);
-      } else {
-        const fallbackList: AssignedWorkerInfo[] = [];
-        (companyMembersRes.data || []).forEach((m: any) => {
+      // 2. Fallback caso a obra não tenha alocados
+      const finalWorkersList = assignedList.length > 0 ? assignedList : (
+        (companyMembersRes.data || []).map((m: any) => {
           const prof = Array.isArray(m.profile) ? m.profile[0] : m.profile;
-          if (prof) {
-            fallbackList.push({
-              id: prof.id,
-              full_name: prof.full_name || 'Sem nome',
-              role_title: prof.role_title || 'Colaborador',
-              avatar_url: prof.avatar_url || null
-            });
-          }
-        });
-        setAvailableWorkers(fallbackList);
-      }
+          return {
+            id: prof?.id || m.id,
+            full_name: prof?.full_name || 'Sem nome',
+            role_title: prof?.role_title || 'Colaborador',
+            avatar_url: prof?.avatar_url || null
+          };
+        })
+      );
+
+      setAvailableWorkers(finalWorkersList);
+      setPresentWorkers(new Set(finalWorkersList.map(w => w.full_name)));
     } catch (err) {
       console.error('Erro ao carregar dados para o diário de obra:', err);
     } finally {
@@ -192,7 +203,35 @@ export const DailyWorkLogModal: React.FC<DailyWorkLogModalProps> = ({
     }
   }, [isOpen, selectedWorkId, loadWorkData]);
 
-  // Mapa de itens para montar a hierarquia visual (Breadcrumb)
+  // Alternar presença de um colaborador na obra hoje
+  const toggleWorkerPresence = (workerName: string) => {
+    setPresentWorkers(prev => {
+      const next = new Set(prev);
+      if (next.has(workerName)) {
+        next.delete(workerName);
+        setEntries(currentEntries =>
+          currentEntries.map(e => ({
+            ...e,
+            executors: e.executors.filter(name => name !== workerName)
+          }))
+        );
+      } else {
+        next.add(workerName);
+      }
+      return next;
+    });
+  };
+
+  const handleSelectAllPresent = () => {
+    if (presentWorkers.size === availableWorkers.length) {
+      setPresentWorkers(new Set());
+      setEntries(current => current.map(e => ({ ...e, executors: [] })));
+    } else {
+      setPresentWorkers(new Set(availableWorkers.map(w => w.full_name)));
+    }
+  };
+
+  // Mapa de itens para montar o caminho hierárquico
   const itemsMap = useMemo(() => {
     const map = new Map<string, WorkItem>();
     workItems.forEach(i => map.set(i.id, i));
@@ -214,13 +253,13 @@ export const DailyWorkLogModal: React.FC<DailyWorkLogModalProps> = ({
     return parts.reverse().join(' / ');
   };
 
-  // Tarefas filtradas na busca
+  // Tarefas disponíveis para apontar
   const availableTasksToLog = useMemo(() => {
     const q = searchTerm.toLowerCase();
     const addedTaskIds = entries.map(e => e.task.id);
 
     return workTasks.filter(t => {
-      if (t.status === 'concluida' || addedTaskIds.includes(t.id)) return false;
+      if (addedTaskIds.includes(t.id)) return false;
       if (!q) return true;
       const parentTitle = getHierarchyBreadcrumb(t.work_item_id).toLowerCase();
       return t.title.toLowerCase().includes(q) || parentTitle.includes(q);
@@ -231,15 +270,17 @@ export const DailyWorkLogModal: React.FC<DailyWorkLogModalProps> = ({
   const addTaskToLog = (task: WorkTask) => {
     const remaining = task.has_progress_tracking
       ? Math.max(0, task.quantity_planned - (task.quantity_executed || 0)).toString()
-      : '1';
+      : '0';
 
     setEntries(prev => [
       {
         tempId: Math.random().toString(36).substr(2, 9),
         task,
         quantity: remaining,
-        isComplete: !task.has_progress_tracking,
-        executors: [] // Começa limpo para selecionar os colaboradores desta atividade específica
+        actionType: 'complete',
+        isRework: false,
+        itemNotes: '',
+        executors: []
       },
       ...prev
     ]);
@@ -251,15 +292,10 @@ export const DailyWorkLogModal: React.FC<DailyWorkLogModalProps> = ({
     setEntries(prev => prev.filter(e => e.tempId !== tempId));
   };
 
-  const updateEntryQty = (tempId: string, val: string) => {
-    setEntries(prev => prev.map(e => e.tempId === tempId ? { ...e, quantity: val } : e));
+  const updateEntryState = (tempId: string, updates: Partial<TaskEntryState>) => {
+    setEntries(prev => prev.map(e => (e.tempId === tempId ? { ...e, ...updates } : e)));
   };
 
-  const toggleEntryChecklist = (tempId: string) => {
-    setEntries(prev => prev.map(e => e.tempId === tempId ? { ...e, isComplete: !e.isComplete } : e));
-  };
-
-  // Alternar executor de uma tarefa específica
   const toggleTaskExecutor = (tempId: string, executorName: string) => {
     setEntries(prev =>
       prev.map(e => {
@@ -281,9 +317,18 @@ export const DailyWorkLogModal: React.FC<DailyWorkLogModalProps> = ({
       setIsSaving(true);
 
       const payload = entries.map(e => {
-        const qty = e.task.has_progress_tracking
-          ? parseFloat(e.quantity.replace(',', '.')) || 0
-          : (e.isComplete ? 1 : 0);
+        let qty = 0;
+        if (e.task.has_progress_tracking) {
+          qty = parseFloat(e.quantity.replace(',', '.')) || 0;
+        } else {
+          qty = e.actionType === 'complete' ? 1 : 0;
+        }
+
+        const combinedTaskNotes = [
+          e.isRework ? '[RETRABALHO]' : '',
+          e.itemNotes.trim(),
+          globalNotes ? `(Geral: ${globalNotes.trim()})` : ''
+        ].filter(Boolean).join(' ') || null;
 
         return {
           company_id: user.company.id,
@@ -293,52 +338,41 @@ export const DailyWorkLogModal: React.FC<DailyWorkLogModalProps> = ({
           entry_date: entryDate,
           quantity_executed: qty,
           team_id: null,
-          executed_by: e.executors, // Executores específicos desta atividade
-          notes: globalNotes || null,
+          executed_by: e.executors,
+          notes: combinedTaskNotes,
           created_by: user?.profile?.id || null,
         };
-      }).filter(e => e.quantity_executed > 0);
+      });
 
-      if (payload.length === 0) {
-        alert('Nenhum apontamento com avanço para salvar. Preencha as quantidades.');
-        setIsSaving(false);
-        return;
-      }
-
-      // 1. Inserir apontamentos no diário (work_task_entries)
       const { error: insertError } = await supabase
         .from('work_task_entries')
         .insert(payload);
 
       if (insertError) throw insertError;
 
-      // 2. Atualizar avanço acumulado e executores das tarefas executadas
       for (const entry of entries) {
-        const qty = entry.task.has_progress_tracking
-          ? parseFloat(entry.quantity.replace(',', '.')) || 0
-          : (entry.isComplete ? 1 : 0);
+        let isFullyDone = false;
+        let newExecuted = entry.task.quantity_executed || 0;
 
-        if (qty <= 0) continue;
+        if (entry.task.has_progress_tracking) {
+          const qty = parseFloat(entry.quantity.replace(',', '.')) || 0;
+          newExecuted = (entry.task.quantity_executed || 0) + qty;
+          isFullyDone = newExecuted >= entry.task.quantity_planned;
+        } else {
+          isFullyDone = entry.actionType === 'complete';
+          if (isFullyDone) newExecuted = 1;
+        }
 
-        const currentExecuted = entry.task.quantity_executed || 0;
-        const newExecuted = entry.task.has_progress_tracking
-          ? currentExecuted + qty
-          : 1;
-
-        const isFullyDone = entry.task.has_progress_tracking
-          ? newExecuted >= entry.task.quantity_planned
-          : entry.isComplete;
-
-        // Combina executores anteriores com os do dia
         const existingExecutors = entry.task.executed_by || [];
         const mergedExecutors = Array.from(new Set([...existingExecutors, ...entry.executors]));
+        const newStatus = isFullyDone ? 'concluida' : 'em_andamento';
 
         await supabase
           .from('work_tasks')
           .update({
             quantity_executed: newExecuted,
             executed_by: mergedExecutors,
-            status: isFullyDone ? 'concluida' : 'em_andamento',
+            status: newStatus,
             updated_at: new Date().toISOString()
           })
           .eq('id', entry.task.id);
@@ -355,112 +389,163 @@ export const DailyWorkLogModal: React.FC<DailyWorkLogModalProps> = ({
 
   if (!isOpen) return null;
 
+  const presentWorkersList = availableWorkers.filter(w => presentWorkers.has(w.full_name));
+
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center p-2 sm:p-4 bg-slate-950/70 backdrop-blur-2xs animate-in fade-in duration-200">
-      <div className="bg-slate-50 border border-slate-200 rounded-3xl w-full max-w-5xl shadow-2xl flex flex-col h-[94vh] sm:h-[88vh] animate-in zoom-in-95 duration-200 overflow-hidden">
+    <div className="fixed inset-0 z-[200] flex items-center justify-center p-0 sm:p-4 bg-slate-950/70 backdrop-blur-2xs animate-in fade-in duration-200">
+      <div className="bg-slate-50 border border-slate-200 w-full sm:rounded-3xl max-w-5xl shadow-2xl flex flex-col h-full sm:h-[88vh] animate-in zoom-in-95 duration-200 overflow-hidden">
         
         {/* CABEÇALHO DO MODAL */}
-        <div className="bg-white px-4 sm:px-6 py-3.5 border-b border-slate-200 flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-2.5 sm:gap-3">
-            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-sky-600 text-white flex items-center justify-center shadow-xs shrink-0">
-              <BookOpenCheck size={20} />
+        <div className="bg-white px-4 sm:px-6 py-3 border-b border-slate-200 flex items-center justify-between shrink-0 shadow-2xs">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-sky-600 text-white flex items-center justify-center shadow-xs shrink-0">
+              <BookOpenCheck size={18} />
             </div>
             <div>
-              <h2 className="text-base sm:text-lg font-black text-slate-900 leading-tight">Diário de Obra</h2>
-              <p className="text-[11px] sm:text-xs font-medium text-slate-500">Lançamento diário de atividades e medição de campo</p>
+              <h2 className="text-sm sm:text-base font-black text-slate-900 leading-tight">Diário de Obra</h2>
+              <p className="text-[10px] sm:text-xs text-slate-400">Lançamento diário de atividades e equipe</p>
             </div>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="p-1.5 sm:p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition cursor-pointer"
+            className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition cursor-pointer"
           >
-            <X size={18} />
+            <X size={20} />
           </button>
         </div>
 
-        {/* CORPO: DIVIDIDO EM 2 COLUNAS (FLEXÍVEL E RESPONSIVO) */}
+        {/* CORPO: 2 COLUNAS (RESPONSIVO TOTAL PARA MOBILE) */}
         <div className="flex-1 min-h-0 flex flex-col lg:flex-row overflow-hidden">
           
-          {/* COLUNA ESQUERDA: PARÂMETROS GERAIS DO DIA E EQUIPE DA OBRA */}
-          <div className="w-full lg:w-80 bg-white border-b lg:border-b-0 lg:border-r border-slate-200 shrink-0 flex flex-col overflow-y-auto max-h-56 lg:max-h-full">
-            <div className="p-4 sm:p-5 space-y-4 sm:space-y-5 text-xs">
+          {/* COLUNA ESQUERDA: DATA, SELEÇÃO DE PRESENÇA E OBSERVAÇÕES */}
+          <div className="w-full lg:w-80 bg-white border-b lg:border-b-0 lg:border-r border-slate-200 shrink-0 flex flex-col overflow-y-auto">
+            <div className="p-3 sm:p-5 space-y-3 sm:space-y-4 text-xs">
               
               {/* DATA DO SERVIÇO */}
               <div>
-                <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">
+                <label className="block text-[10px] sm:text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">
                   Data da Execução *
                 </label>
-                <div className="relative">
-                  <input
-                    type="date"
-                    required
-                    value={entryDate}
-                    onChange={e => setEntryDate(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-bold focus:ring-2 focus:ring-sky-500 text-xs sm:text-sm"
-                  />
-                </div>
+                <input
+                  type="date"
+                  required
+                  value={entryDate}
+                  onChange={e => setEntryDate(e.target.value)}
+                  className="w-full px-3 py-1.5 sm:py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-bold focus:ring-2 focus:ring-sky-500 text-xs sm:text-sm"
+                />
               </div>
 
-              {/* INFORMATIVO: COLABORADORES ALOCADOS NESTA OBRA */}
-              <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-3 sm:p-3.5 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
-                    <Users size={13} className="text-sky-600" />
+              {/* SELEÇÃO DE PRESENÇA (SANFONADA NO MOBILE PARA ECONOMIZAR ESPAÇO) */}
+              <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-2.5 sm:p-3.5 space-y-2">
+                <div 
+                  className="flex items-center justify-between cursor-pointer"
+                  onClick={() => setIsMobilePresenceOpen(prev => !prev)}
+                >
+                  <span className="text-[10px] sm:text-[11px] font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                    <Users size={14} className="text-sky-600" />
                     <span>Equipe no Canteiro</span>
                   </span>
-                  <span className="text-[10px] font-extrabold text-sky-700 bg-sky-50 px-2 py-0.5 rounded-md border border-sky-200">
-                    {availableWorkers.length} {availableWorkers.length === 1 ? 'membro' : 'membros'}
-                  </span>
+                  
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-black text-sky-700 bg-sky-100/70 px-2 py-0.5 rounded-md border border-sky-200">
+                      {presentWorkers.size}/{availableWorkers.length} presentes
+                    </span>
+                    <button 
+                      type="button" 
+                      className="text-slate-400 lg:hidden p-0.5"
+                    >
+                      {isMobilePresenceOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                    </button>
+                  </div>
                 </div>
 
-                {availableWorkers.length > 0 ? (
-                  <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto pr-0.5">
-                    {availableWorkers.map(worker => (
-                      <span
-                        key={worker.id}
-                        className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-white border border-slate-200 rounded-lg text-[10px] font-bold text-slate-700 shadow-2xs"
-                        title={worker.role_title || 'Colaborador'}
-                      >
-                        <span className="w-3.5 h-3.5 rounded-full bg-sky-600 text-white font-bold text-[7px] flex items-center justify-center shrink-0">
-                          {getInitials(worker.full_name)}
-                        </span>
-                        <span className="truncate max-w-[110px]">{worker.full_name}</span>
-                      </span>
-                    ))}
+                {/* Lista de Presença: Sempre visível no Desktop, sanfonada no Mobile */}
+                <div className={`${isMobilePresenceOpen ? 'block' : 'hidden lg:block'} space-y-2 pt-1 border-t border-slate-200/70`}>
+                  <div className="flex justify-between items-center text-[10px] text-slate-400">
+                    <span>Marque quem compareceu hoje:</span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleSelectAllPresent();
+                      }}
+                      className="font-bold text-sky-600 hover:underline cursor-pointer"
+                    >
+                      {presentWorkers.size === availableWorkers.length ? 'Desmarcar Todos' : 'Marcar Todos'}
+                    </button>
                   </div>
-                ) : (
-                  <p className="text-[10px] text-slate-400 italic">
-                    Nenhum colaborador alocado nesta obra. Todos os membros da empresa estão disponíveis.
-                  </p>
-                )}
+
+                  {availableWorkers.length > 0 ? (
+                    <div className="space-y-1 max-h-36 sm:max-h-48 overflow-y-auto pr-0.5">
+                      {availableWorkers.map(worker => {
+                        const isPresent = presentWorkers.has(worker.full_name);
+                        return (
+                          <div
+                            key={worker.id}
+                            onClick={() => toggleWorkerPresence(worker.full_name)}
+                            className={`p-1.5 sm:p-2 rounded-xl border transition flex items-center justify-between cursor-pointer ${
+                              isPresent
+                                ? 'bg-emerald-50/80 border-emerald-300 text-emerald-950 font-bold shadow-2xs'
+                                : 'bg-white border-slate-200 text-slate-400 hover:bg-slate-100 opacity-60'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <div className={`w-5 h-5 sm:w-6 sm:h-6 rounded-full flex items-center justify-center text-[8px] sm:text-[9px] font-bold overflow-hidden shrink-0 ${
+                                isPresent ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-500'
+                              }`}>
+                                {worker.avatar_url ? (
+                                  <img src={worker.avatar_url} alt="" className="w-full h-full object-cover" />
+                                ) : getInitials(worker.full_name)}
+                              </div>
+                              <div className="min-w-0">
+                                <span className="block text-xs truncate leading-tight">{worker.full_name}</span>
+                                <span className="text-[9px] text-slate-400 block truncate leading-none mt-0.5">{worker.role_title || 'Colaborador'}</span>
+                              </div>
+                            </div>
+
+                            <div className={`w-3.5 h-3.5 sm:w-4 sm:h-4 rounded border flex items-center justify-center shrink-0 ${
+                              isPresent ? 'bg-emerald-600 border-emerald-600 text-white' : 'border-slate-300 bg-white'
+                            }`}>
+                              {isPresent && <Check size={11} />}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="text-[10px] text-slate-400 italic">
+                      Nenhum colaborador alocado nesta obra.
+                    </p>
+                  )}
+                </div>
               </div>
 
-              {/* OBSERVAÇÕES DO DIA */}
-              <div>
-                <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">
-                  Observações de Campo
+              {/* OBSERVAÇÕES GERAIS (DESKTOP E TABLET) */}
+              <div className="hidden sm:block">
+                <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                  Observações Gerais do Canteiro
                 </label>
                 <textarea
-                  rows={3}
+                  rows={2}
                   value={globalNotes}
                   onChange={e => setGlobalNotes(e.target.value)}
-                  placeholder="Ex: Chuva na parte da tarde, atraso na entrega de cimento..."
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium focus:ring-2 focus:ring-sky-500 resize-none text-xs"
+                  placeholder="Ex: Clima chuvoso à tarde, entrega de cimento..."
+                  className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium focus:ring-2 focus:ring-sky-500 resize-none text-xs"
                 />
               </div>
 
             </div>
           </div>
 
-          {/* COLUNA DIREITA: BUSCA DE TAREFAS E ATRIBUIÇÃO DE EXECUTORES */}
-          <div className="flex-1 flex flex-col min-h-0 bg-slate-50/50 relative">
+          {/* COLUNA DIREITA: BUSCA E TAREFAS */}
+          <div className="flex-1 flex flex-col min-h-0 bg-slate-50/60 relative">
             
             {/* Barra de Busca de Tarefas */}
-            <div className="p-3 sm:p-4 border-b border-slate-200 bg-white shrink-0 z-20">
-              <div className="relative max-w-xl" ref={searchRef}>
+            <div className="p-2.5 sm:p-4 border-b border-slate-200 bg-white shrink-0 z-20 shadow-2xs">
+              <div className="relative w-full" ref={searchRef}>
                 <div className="relative">
-                  <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                   <input
                     type="text"
                     value={searchTerm}
@@ -469,20 +554,21 @@ export const DailyWorkLogModal: React.FC<DailyWorkLogModalProps> = ({
                       setIsSearchOpen(true);
                     }}
                     onFocus={() => setIsSearchOpen(true)}
-                    placeholder="Buscar tarefas na EAP para apontar avanço..."
-                    className="w-full pl-10 pr-4 py-2 sm:py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs sm:text-sm font-semibold text-slate-800 focus:ring-2 focus:ring-sky-500 shadow-xs placeholder-slate-400"
+                    placeholder="Adicionar tarefa à lista de hoje..."
+                    className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs sm:text-sm font-semibold text-slate-800 focus:ring-2 focus:ring-sky-500 shadow-2xs placeholder-slate-400"
                   />
                 </div>
 
+                {/* Popover de Resultados da Busca */}
                 {isSearchOpen && (searchTerm.length > 0 || availableTasksToLog.length > 0) && (
-                  <div className="absolute left-0 right-0 top-full mt-2 bg-white border border-slate-200 rounded-2xl shadow-xl max-h-64 sm:max-h-72 overflow-y-auto z-50 animate-in fade-in zoom-in-95 duration-100 py-1 divide-y divide-slate-100">
+                  <div className="absolute left-0 right-0 top-full mt-1.5 bg-white border border-slate-200 rounded-2xl shadow-xl max-h-56 sm:max-h-72 overflow-y-auto z-50 animate-in fade-in zoom-in-95 duration-100 py-1 divide-y divide-slate-100">
                     {loadingData ? (
-                      <div className="p-4 text-center text-xs text-slate-400">
+                      <div className="p-3 text-center text-xs text-slate-400">
                         <Loader2 size={16} className="animate-spin mx-auto mb-1 text-sky-600" />
                         Carregando tarefas...
                       </div>
                     ) : availableTasksToLog.length === 0 ? (
-                      <div className="p-4 text-center text-xs text-slate-500">
+                      <div className="p-3 text-center text-xs text-slate-500">
                         Nenhuma tarefa pendente encontrada.
                       </div>
                     ) : (
@@ -490,17 +576,17 @@ export const DailyWorkLogModal: React.FC<DailyWorkLogModalProps> = ({
                         <div
                           key={task.id}
                           onClick={() => addTaskToLog(task)}
-                          className="px-4 py-2 hover:bg-sky-50 cursor-pointer flex items-center justify-between group transition"
+                          className="px-3.5 py-2 hover:bg-sky-50 cursor-pointer flex items-center justify-between group transition"
                         >
-                          <div className="min-w-0 flex-1 pr-3">
+                          <div className="min-w-0 flex-1 pr-2">
                             <strong className="block text-xs sm:text-sm text-slate-900 truncate group-hover:text-sky-700 transition">
                               {task.title}
                             </strong>
-                            <span className="block text-[10px] text-slate-400 font-medium truncate mt-0.5">
+                            <span className="block text-[10px] text-slate-400 font-medium truncate">
                               {getHierarchyBreadcrumb(task.work_item_id)}
                             </span>
                           </div>
-                          <div className="shrink-0 text-[10px] font-bold bg-slate-100 text-slate-600 px-2 py-0.5 rounded-lg border border-slate-200">
+                          <div className="shrink-0 text-[9px] sm:text-[10px] font-bold bg-slate-100 text-slate-600 px-2 py-0.5 rounded-lg border border-slate-200">
                             {task.has_progress_tracking
                               ? `Faltam ${Math.max(0, task.quantity_planned - (task.quantity_executed || 0))} ${task.unit || 'un'}`
                               : 'Checklist'}
@@ -513,14 +599,14 @@ export const DailyWorkLogModal: React.FC<DailyWorkLogModalProps> = ({
               </div>
             </div>
 
-            {/* Lista de Tarefas Adicionadas */}
-            <div className="flex-1 overflow-y-auto p-3 sm:p-5">
+            {/* Lista de Tarefas Adicionadas (ROBUSTA NO MOBILE) */}
+            <div className="flex-1 overflow-y-auto p-2.5 sm:p-5">
               {entries.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-slate-400 p-6 text-center">
-                  <BookOpenCheck size={40} className="text-slate-300 mb-2.5" />
+                  <BookOpenCheck size={36} className="text-slate-300 mb-2" />
                   <p className="text-xs sm:text-sm font-bold text-slate-700">Nenhuma tarefa adicionada hoje</p>
                   <p className="text-[11px] max-w-xs text-slate-400 mt-1">
-                    Digite o nome da atividade no campo de busca acima para apontar as quantidades executadas.
+                    Digite no campo de busca acima para incluir as tarefas trabalhadas pela equipe no canteiro.
                   </p>
                 </div>
               ) : (
@@ -530,14 +616,14 @@ export const DailyWorkLogModal: React.FC<DailyWorkLogModalProps> = ({
                       key={entry.tempId}
                       className="bg-white border border-slate-200 rounded-2xl p-3 sm:p-4 shadow-2xs space-y-2.5 hover:border-slate-300 transition"
                     >
-                      {/* Topo do Card: Nome da Tarefa, Quantidade e Excluir */}
-                      <div className="flex items-start justify-between gap-2.5">
+                      {/* LINHA 1: NOME DA TAREFA E LOCALIZAÇÃO (SEMPRE 100% VISÍVEL) */}
+                      <div className="flex items-start justify-between gap-2">
                         <div className="flex items-start gap-2 min-w-0 flex-1">
-                          <div className="w-5 h-5 rounded-full bg-slate-100 text-slate-600 font-bold text-[10px] flex items-center justify-center shrink-0 border border-slate-200 mt-0.5">
+                          <span className="w-5 h-5 rounded-full bg-sky-100 text-sky-800 font-black text-[10px] flex items-center justify-center shrink-0 border border-sky-200 mt-0.5">
                             {index + 1}
-                          </div>
+                          </span>
                           <div className="min-w-0 flex-1">
-                            <h4 className="font-bold text-slate-900 text-xs sm:text-sm truncate" title={entry.task.title}>
+                            <h4 className="font-extrabold text-slate-900 text-xs sm:text-sm leading-snug break-words">
                               {entry.task.title}
                             </h4>
                             <span className="block text-[10px] text-slate-400 font-medium truncate mt-0.5" title={getHierarchyBreadcrumb(entry.task.work_item_id)}>
@@ -546,73 +632,125 @@ export const DailyWorkLogModal: React.FC<DailyWorkLogModalProps> = ({
                           </div>
                         </div>
 
-                        {/* Controles de Quantidade / Conclusão */}
-                        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+                        {/* Botão de Excluir */}
+                        <button
+                          type="button"
+                          onClick={() => removeEntry(entry.tempId)}
+                          className="p-1 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer shrink-0"
+                          title="Remover do diário"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+
+                      {/* LINHA 2: CONTROLES DE AVANÇO (QUEBRA LIMPA NO MOBILE) */}
+                      <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
+                        
+                        {/* Toggle de Retrabalho */}
+                        <button
+                          type="button"
+                          onClick={() => updateEntryState(entry.tempId, { isRework: !entry.isRework })}
+                          className={`px-2.5 py-1 rounded-xl text-[10px] font-bold border transition flex items-center gap-1 cursor-pointer ${
+                            entry.isRework
+                              ? 'bg-amber-500 text-white border-amber-600 shadow-2xs'
+                              : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                          }`}
+                          title="Marcar se foi retrabalho ou conserto"
+                        >
+                          <RotateCcw size={11} />
+                          <span>{entry.isRework ? 'Retrabalho Ativo' : 'Retrabalho'}</span>
+                        </button>
+
+                        {/* Controle de Status ou Quantidade */}
+                        <div className="flex items-center gap-1.5 shrink-0 ml-auto">
                           {entry.task.has_progress_tracking ? (
                             <div className="flex items-center gap-1.5">
-                              <span className="text-[10px] text-slate-400 font-bold hidden sm:inline">Qtd Feita:</span>
+                              <span className="text-[10px] text-slate-400 font-bold">Feito hoje:</span>
                               <div className="relative">
                                 <input
                                   type="text"
                                   value={entry.quantity}
-                                  onChange={e => updateEntryQty(entry.tempId, e.target.value)}
-                                  className="w-16 sm:w-20 px-2 py-1 bg-white border border-sky-300 rounded-xl text-xs sm:text-sm font-black text-sky-950 text-center focus:ring-2 focus:ring-sky-500 shadow-2xs"
+                                  onChange={e => updateEntryState(entry.tempId, { quantity: e.target.value })}
+                                  className="w-16 px-2 py-1 bg-white border border-sky-300 rounded-xl text-xs font-black text-sky-950 text-center focus:ring-2 focus:ring-sky-500 shadow-2xs"
                                 />
-                                <span className="absolute -top-2 -right-2 bg-slate-100 text-slate-600 text-[9px] font-bold px-1.5 py-0.2 rounded border border-slate-200">
+                                <span className="absolute -top-2 -right-2 bg-slate-100 text-slate-600 text-[8px] font-bold px-1 rounded border border-slate-200">
                                   {entry.task.unit || 'un'}
                                 </span>
                               </div>
                             </div>
                           ) : (
-                            <button
-                              type="button"
-                              onClick={() => toggleEntryChecklist(entry.tempId)}
-                              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl border text-xs font-bold transition cursor-pointer ${
-                                entry.isComplete
-                                  ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
-                                  : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'
-                              }`}
-                            >
-                              {entry.isComplete ? <CheckSquare size={14} className="text-emerald-600" /> : <Square size={14} />}
-                              <span>{entry.isComplete ? 'Concluída' : 'Pendente'}</span>
-                            </button>
-                          )}
+                            <div className="flex bg-slate-100 p-0.5 rounded-xl border border-slate-200">
+                              <button
+                                type="button"
+                                onClick={() => updateEntryState(entry.tempId, { actionType: 'progress' })}
+                                className={`px-2 py-1 rounded-lg transition text-[10px] font-bold flex items-center gap-1 cursor-pointer ${
+                                  entry.actionType === 'progress'
+                                    ? 'bg-sky-600 text-white shadow-2xs'
+                                    : 'text-slate-600 hover:text-slate-900'
+                                }`}
+                              >
+                                <PlayCircle size={11} />
+                                <span>Em Andamento</span>
+                              </button>
 
-                          <button
-                            type="button"
-                            onClick={() => removeEntry(entry.tempId)}
-                            className="p-1 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
-                            title="Remover do relatório"
-                          >
-                            <Trash2 size={15} />
-                          </button>
+                              <button
+                                type="button"
+                                onClick={() => updateEntryState(entry.tempId, { actionType: 'complete' })}
+                                className={`px-2 py-1 rounded-lg transition text-[10px] font-bold flex items-center gap-1 cursor-pointer ${
+                                  entry.actionType === 'complete'
+                                    ? 'bg-emerald-600 text-white shadow-2xs'
+                                    : 'text-slate-600 hover:text-slate-900'
+                                }`}
+                              >
+                                <CheckSquare size={11} />
+                                <span>Concluída</span>
+                              </button>
+                            </div>
+                          )}
                         </div>
                       </div>
 
-                      {/* EXECUTORES ESPECÍFICOS DESTA TAREFA */}
+                      {/* LINHA 3: CAMPO DE OBSERVAÇÃO ESPECÍFICO DO ITEM */}
+                      <div>
+                        <div className="relative">
+                          <MessageSquare size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                          <input
+                            type="text"
+                            value={entry.itemNotes}
+                            onChange={e => updateEntryState(entry.tempId, { itemNotes: e.target.value })}
+                            placeholder="Nota pontual (ex: tubulação obstruída, faltou parafuso)..."
+                            className="w-full pl-7 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-[11px] text-slate-800 placeholder-slate-400 focus:bg-white focus:ring-1 focus:ring-sky-500"
+                          />
+                        </div>
+                      </div>
+
+                      {/* LINHA 4: QUEM EXECUTOU ESTA TAREFA (FILTRADO POR QUEM FOI HOJE) */}
                       <div className="pt-2 border-t border-slate-100">
-                        <div className="flex items-center justify-between mb-1">
+                        <div className="flex items-center justify-between mb-1.5">
                           <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
                             <UserCheck size={11} className="text-sky-600" />
-                            <span>Quem executou esta tarefa?</span>
+                            <span>Executado por:</span>
                             {entry.executors.length > 0 && (
                               <span className="text-sky-600 font-extrabold">({entry.executors.length})</span>
                             )}
                           </label>
                         </div>
 
-                        {availableWorkers.length === 0 ? (
-                          <p className="text-[10px] text-slate-400 italic">Nenhum colaborador encontrado.</p>
+                        {presentWorkersList.length === 0 ? (
+                          <div className="p-2 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-[10px] flex items-center gap-1.5">
+                            <UserX size={13} className="text-amber-600 shrink-0" />
+                            <span>Marque os colaboradores presentes na lista de equipe à esquerda.</span>
+                          </div>
                         ) : (
-                          <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto pr-0.5">
-                            {availableWorkers.map(worker => {
+                          <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto pr-0.5">
+                            {presentWorkersList.map(worker => {
                               const isSelected = entry.executors.includes(worker.full_name);
                               return (
                                 <button
                                   type="button"
                                   key={worker.id}
                                   onClick={() => toggleTaskExecutor(entry.tempId, worker.full_name)}
-                                  className={`px-2 py-0.5 rounded-lg text-[10px] sm:text-[11px] font-semibold border transition flex items-center gap-1.5 cursor-pointer ${
+                                  className={`px-2 py-0.5 rounded-lg text-[10px] font-semibold border transition flex items-center gap-1 cursor-pointer ${
                                     isSelected
                                       ? 'bg-sky-50 text-sky-800 border-sky-300 font-bold shadow-2xs'
                                       : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
@@ -625,8 +763,8 @@ export const DailyWorkLogModal: React.FC<DailyWorkLogModalProps> = ({
                                       <img src={worker.avatar_url} alt="" className="w-full h-full object-cover" />
                                     ) : getInitials(worker.full_name)}
                                   </div>
-                                  <span>{worker.full_name}</span>
-                                  {isSelected && <CheckSquare size={11} className="text-sky-600 ml-0.5" />}
+                                  <span className="truncate max-w-[120px]">{worker.full_name}</span>
+                                  {isSelected && <CheckSquare size={10} className="text-sky-600 ml-0.5 shrink-0" />}
                                 </button>
                               );
                             })}
@@ -642,16 +780,16 @@ export const DailyWorkLogModal: React.FC<DailyWorkLogModalProps> = ({
           </div>
         </div>
 
-        {/* RODAPÉ DO MODAL */}
-        <div className="bg-white border-t border-slate-200 p-3 sm:px-6 flex items-center justify-between shrink-0">
+        {/* RODAPÉ DO MODAL (FIXO E BEM VISÍVEL NO MOBILE) */}
+        <div className="bg-white border-t border-slate-200 p-3 sm:px-6 flex items-center justify-between shrink-0 shadow-lg">
           <div className="text-xs font-semibold text-slate-500">
-            <strong className="text-slate-900 text-sm">{entries.length}</strong> {entries.length === 1 ? 'tarefa lançada' : 'tarefas lançadas'}
+            <strong className="text-slate-900 text-sm font-black">{entries.length}</strong> {entries.length === 1 ? 'tarefa' : 'tarefas'}
           </div>
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={onClose}
-              className="px-3.5 sm:px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition cursor-pointer"
+              className="px-3 sm:px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition cursor-pointer"
             >
               Cancelar
             </button>
@@ -659,9 +797,9 @@ export const DailyWorkLogModal: React.FC<DailyWorkLogModalProps> = ({
               type="button"
               onClick={handleSave}
               disabled={isSaving || entries.length === 0}
-              className="px-4 sm:px-6 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl font-bold text-xs sm:text-sm shadow-xs flex items-center gap-2 transition disabled:opacity-50 cursor-pointer"
+              className="px-4 sm:px-6 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl font-bold text-xs sm:text-sm shadow-xs flex items-center gap-1.5 transition disabled:opacity-50 cursor-pointer"
             >
-              {isSaving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
+              {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
               <span>Salvar Diário</span>
             </button>
           </div>

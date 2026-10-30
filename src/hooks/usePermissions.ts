@@ -18,24 +18,30 @@ export interface ModulePermissions {
   canApplyDiscount: boolean;
   canViewProfitMargin: boolean;
 
-  // Obras: Gestão & EAP
-  canViewWorks: boolean;
-  canCreateWorks: boolean;
+  // ==========================================
+  // OBRAS: AS 9 PERMISSÕES SIMPLIFICADAS
+  // ==========================================
+  canViewWorks: boolean;            // 1. Ter acesso às obras
+  canManageWorkDetails: boolean;    // 2. Criar e editar dados da obra
+  canDeleteWorks: boolean;          // 3. Excluir obra
+  canManageWorkStructure: boolean;  // 4. Criar, editar, excluir e duplicar itens/tarefas (EAP)
+  canExecuteWorkTasks: boolean;     // 5. Apontar avanço e dar baixa nas tarefas
+  canReopenWorkTasks: boolean;      // 6. Reabrir tarefas
+  canManageSchedule: boolean;       // 7. Visualizar e gerenciar cronograma
+  canManageWorkFinancial: boolean;  // 8. Visualizar e operar o financeiro (ver valores em R$)
+  canViewDailyLogs: boolean;        // 9. Visualizar diário de obra
+
+  // Aliases de compatibilidade retroativa para não quebrar componentes existentes
   canEditWorkDetails: boolean;
-  canDeleteWorks: boolean;
+  canCreateWorks: boolean;
   canManageWorkItems: boolean;
   canDeleteWorkItems: boolean;
   canDuplicateWorkItems: boolean;
-
-  // Obras: Campo & Cronograma
   canCreateWorkTasks: boolean;
   canCompleteWorkTasks: boolean;
   canAssignExecutors: boolean;
-  canReopenWorkTasks: boolean;
   canViewSchedule: boolean;
   canEditSchedule: boolean;
-
-  // Obras: Financeiro & Medições
   canViewWorkFinancial: boolean;
   canViewWorkPrices: boolean;
   canCreateMeasurements: boolean;
@@ -79,17 +85,26 @@ const DEFAULT_PERMISSIONS: ModulePermissions = {
   canApplyDiscount: false,
   canViewProfitMargin: false,
 
+  // Obras Simplificadas
   canViewWorks: false,
-  canCreateWorks: false,
-  canEditWorkDetails: false,
+  canManageWorkDetails: false,
   canDeleteWorks: false,
+  canManageWorkStructure: false,
+  canExecuteWorkTasks: false,
+  canReopenWorkTasks: false,
+  canManageSchedule: false,
+  canManageWorkFinancial: false,
+  canViewDailyLogs: false,
+
+  // Aliases retroativos
+  canEditWorkDetails: false,
+  canCreateWorks: false,
   canManageWorkItems: false,
   canDeleteWorkItems: false,
   canDuplicateWorkItems: false,
   canCreateWorkTasks: false,
   canCompleteWorkTasks: false,
   canAssignExecutors: false,
-  canReopenWorkTasks: false,
   canViewSchedule: false,
   canEditSchedule: false,
   canViewWorkFinancial: false,
@@ -276,17 +291,27 @@ export const usePermissions = () => {
               canDeleteQuotes: true,
               canApplyDiscount: true,
               canViewProfitMargin: true,
+
+              // 9 Obras completas para Master
               canViewWorks: true,
+              canManageWorkDetails: true,
+              canDeleteWorks: true,
+              canManageWorkStructure: true,
+              canExecuteWorkTasks: true,
+              canReopenWorkTasks: true,
+              canManageSchedule: true,
+              canManageWorkFinancial: true,
+              canViewDailyLogs: true,
+
+              // Aliases
               canCreateWorks: true,
               canEditWorkDetails: true,
-              canDeleteWorks: true,
               canManageWorkItems: true,
               canDeleteWorkItems: true,
               canDuplicateWorkItems: true,
               canCreateWorkTasks: true,
               canCompleteWorkTasks: true,
               canAssignExecutors: true,
-              canReopenWorkTasks: true,
               canViewSchedule: true,
               canEditSchedule: true,
               canViewWorkFinancial: true,
@@ -295,6 +320,7 @@ export const usePermissions = () => {
               canDeleteMeasurements: true,
               canManageInvoices: true,
               canPrintMeasurements: true,
+
               canViewHR: true,
               canManageEmployees: true,
               canManageSalariesBenefits: true,
@@ -313,6 +339,17 @@ export const usePermissions = () => {
 
         const has = (...keys: string[]) => keys.some((k) => perms.includes(k));
 
+        // Resolução das permissões das Obras (aceitando chaves novas ou legadas salvas no banco)
+        const canViewWorks = has('works_view', 'works.view', 'works_manage');
+        const canManageWorkDetails = has('works_edit_details', 'works_create', 'works.edit_details', 'works.create', 'works_manage_details');
+        const canDeleteWorks = has('works_delete', 'works.delete');
+        const canManageWorkStructure = has('work_items_manage', 'work_tasks_create', 'work_items_delete', 'work_items_duplicate', 'works_manage_structure');
+        const canExecuteWorkTasks = has('work_tasks_complete', 'work_tasks_assign', 'works_execute_tasks');
+        const canReopenWorkTasks = has('work_tasks_reopen', 'works_reopen_tasks');
+        const canManageSchedule = has('work_schedule_view', 'work_schedule_edit', 'works_manage_schedule');
+        const canManageWorkFinancial = has('work_financial_view', 'work_prices_view', 'work_measurements_create', 'work_measurements_delete', 'work_invoices_manage', 'work_measurements_print', 'works_manage_financial');
+        const canViewDailyLogs = has('works_view_daily_logs', 'works_view');
+
         const resolvedPermissions: ModulePermissions = {
           canViewContacts: has('contacts_view', 'contacts.view', 'contacts_manage', 'contacts.manage', 'contacts_view_all'),
           canCreateEditContacts: has('contacts_edit', 'contacts.create_edit', 'contacts_create', 'contacts_manage'),
@@ -327,27 +364,34 @@ export const usePermissions = () => {
           canApplyDiscount: has('proposals_discount', 'proposals.discount'),
           canViewProfitMargin: has('proposals_margin', 'proposals.margin'),
 
-          canViewWorks: has('works_view', 'works.view', 'works_manage'),
-          canCreateWorks: has('works_create', 'works.create'),
-          canEditWorkDetails: has('works_edit_details', 'works.edit_details'),
-          canDeleteWorks: has('works_delete', 'works.delete'),
-          canManageWorkItems: has('work_items_manage', 'work_items.manage'),
-          canDeleteWorkItems: has('work_items_delete', 'work_items.delete'),
-          canDuplicateWorkItems: has('work_items_duplicate', 'work_items.duplicate'),
+          // 9 Permissões de Obra
+          canViewWorks,
+          canManageWorkDetails,
+          canDeleteWorks,
+          canManageWorkStructure,
+          canExecuteWorkTasks,
+          canReopenWorkTasks,
+          canManageSchedule,
+          canManageWorkFinancial,
+          canViewDailyLogs,
 
-          canCreateWorkTasks: has('work_tasks_create', 'work_tasks.create'),
-          canCompleteWorkTasks: has('work_tasks_complete', 'work_tasks.complete'),
-          canAssignExecutors: has('work_tasks_assign', 'work_tasks.assign'),
-          canReopenWorkTasks: has('work_tasks_reopen', 'work_tasks.reopen'),
-          canViewSchedule: has('work_schedule_view', 'work_schedule.view'),
-          canEditSchedule: has('work_schedule_edit', 'work_schedule.edit'),
-
-          canViewWorkFinancial: has('work_financial_view', 'work_financial.view'),
-          canViewWorkPrices: has('work_prices_view', 'work_prices.view'),
-          canCreateMeasurements: has('work_measurements_create', 'work_measurements.create'),
-          canDeleteMeasurements: has('work_measurements_delete', 'work_measurements.delete'),
-          canManageInvoices: has('work_invoices_manage', 'work_invoices.manage'),
-          canPrintMeasurements: has('work_measurements_print', 'work_measurements.print'),
+          // Mapeamentos retroativos
+          canCreateWorks: canManageWorkDetails,
+          canEditWorkDetails: canManageWorkDetails,
+          canManageWorkItems: canManageWorkStructure,
+          canDeleteWorkItems: canManageWorkStructure,
+          canDuplicateWorkItems: canManageWorkStructure,
+          canCreateWorkTasks: canManageWorkStructure,
+          canCompleteWorkTasks: canExecuteWorkTasks,
+          canAssignExecutors: canExecuteWorkTasks,
+          canViewSchedule: canManageSchedule,
+          canEditSchedule: canManageSchedule,
+          canViewWorkFinancial: canManageWorkFinancial,
+          canViewWorkPrices: canManageWorkFinancial, // REGRA: Apenas quem tem financeiro vê preços/valores
+          canCreateMeasurements: canManageWorkFinancial,
+          canDeleteMeasurements: canManageWorkFinancial,
+          canManageInvoices: canManageWorkFinancial,
+          canPrintMeasurements: canManageWorkFinancial,
 
           // RH & Pessoas
           canViewHR: has('hr_view', 'hr.view', 'hr_manage'),

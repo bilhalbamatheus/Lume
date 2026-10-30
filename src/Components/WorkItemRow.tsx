@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, type ReactNode } from 'react';
 import {
   ChevronRight,
   ChevronDown,
@@ -29,6 +29,7 @@ import {
 import { supabase } from '../lib/supabase';
 
 export interface WorkTask {
+  parentTitle: ReactNode;
   id: string;
   work_item_id: string;
   title: string;
@@ -211,7 +212,6 @@ export const WorkItemRow: React.FC<WorkItemRowProps> = ({
   const [openItemMenu, setOpenItemMenu] = useState(false);
   const [openTaskMenuId, setOpenTaskMenuId] = useState<string | null>(null);
 
-  // Armazena as tarefas localmente para refletir bloqueios instantâneos
   const [localTasks, setLocalTasks] = useState<WorkTask[]>(item.tasks || []);
 
   useEffect(() => {
@@ -257,7 +257,6 @@ export const WorkItemRow: React.FC<WorkItemRowProps> = ({
   const [taskDueDate, setTaskDueDate] = useState(item.due_date || '');
   const [taskDependsOnId, setTaskDependsOnId] = useState('');
   
-  // Criar tarefa bloqueada
   const [createAsBlocked, setCreateAsBlocked] = useState(false);
   const [createBlockReason, setCreateBlockReason] = useState('');
 
@@ -412,7 +411,7 @@ export const WorkItemRow: React.FC<WorkItemRowProps> = ({
   };
 
   const handleConfirmCompletion = async () => {
-    if (!completingTask || !onSaveTaskEntry) return;
+    if (!completingTask || !onSaveTaskEntry || !canCompleteTasks) return;
 
     try {
       setIsSavingEntry(true);
@@ -428,7 +427,7 @@ export const WorkItemRow: React.FC<WorkItemRowProps> = ({
         itemId: item.id,
         date: entryDate,
         quantity: parsedQty,
-        teamId: null, // Modelo agora baseado puramente em colaboradores
+        teamId: null,
         executors: selectedExecutors,
         notes: entryNotes,
         isChecklistComplete: !completingTask.has_progress_tracking && checklistAction === 'complete'
@@ -538,7 +537,7 @@ export const WorkItemRow: React.FC<WorkItemRowProps> = ({
   };
 
   const handleOpenConfigModal = (task: WorkTask) => {
-    if (effectiveIsBlocked) return;
+    if (effectiveIsBlocked || !canCreateTasks) return;
     setConfigTask(task);
     setConfigStartDate(task.start_date || '');
     setConfigDueDate(task.due_date || '');
@@ -547,7 +546,7 @@ export const WorkItemRow: React.FC<WorkItemRowProps> = ({
   };
 
   const handleConfirmUnlinkTaskDependency = async () => {
-    if (!taskToUnlink) return;
+    if (!taskToUnlink || !canManageItems) return;
     try {
       setUnlinking(true);
       const { error } = await supabase
@@ -610,9 +609,9 @@ export const WorkItemRow: React.FC<WorkItemRowProps> = ({
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
                 {effectiveIsBlocked && (
-                 <span title="Item Bloqueado por Dependência" className="inline-flex items-center">
-  <Lock size={13} className="text-amber-500 shrink-0" />
-</span>
+                  <span title="Item Bloqueado por Dependência" className="inline-flex items-center">
+                    <Lock size={13} className="text-amber-500 shrink-0" />
+                  </span>
                 )}
                 
                 <span className={`font-bold text-xs sm:text-sm break-words transition-colors ${effectiveIsBlocked ? 'text-amber-900' : 'text-slate-900 hover:text-sky-600'}`}>
@@ -645,6 +644,7 @@ export const WorkItemRow: React.FC<WorkItemRowProps> = ({
                   </span>
                 )}
 
+                {/* VALOR DO ITEM: Exibido apenas se tiver permissão financeira/técnico/comercial */}
                 {measurementType === 'por_item' && item.unit_price > 0 && canViewPrices && (
                   <span className="text-[9px] sm:text-[10px] bg-emerald-50 text-emerald-800 px-1.5 sm:px-2 py-0.5 rounded border border-emerald-100 font-bold shrink-0">
                     R$ {item.unit_price.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
@@ -656,14 +656,14 @@ export const WorkItemRow: React.FC<WorkItemRowProps> = ({
                     type="button"
                     onClick={e => {
                       e.stopPropagation();
-                      setItemDepToUnlink(item);
+                      if (canManageItems) setItemDepToUnlink(item);
                     }}
-                    title="Clique para desvincular a dependência"
-                    className="group flex items-center gap-1 text-[9px] sm:text-[10px] font-bold bg-amber-100/90 hover:bg-amber-200 text-amber-800 px-1.5 sm:px-2 py-0.5 rounded-full transition cursor-pointer border border-amber-200"
+                    title={canManageItems ? "Clique para desvincular a dependência" : "Dependência ativa"}
+                    className={`group flex items-center gap-1 text-[9px] sm:text-[10px] font-bold bg-amber-100/90 text-amber-800 px-1.5 sm:px-2 py-0.5 rounded-full transition border border-amber-200 ${canManageItems ? 'hover:bg-amber-200 cursor-pointer' : 'cursor-default'}`}
                   >
                     <Lock size={9} />
                     <span className="truncate max-w-[140px] sm:max-w-none">Aguardando: {dependencyItem.title}</span>
-                    <X size={11} className="ml-0.5 text-amber-600 group-hover:text-amber-900" />
+                    {canManageItems && <X size={11} className="ml-0.5 text-amber-600 group-hover:text-amber-900" />}
                   </button>
                 )}
               </div>
@@ -934,6 +934,7 @@ export const WorkItemRow: React.FC<WorkItemRowProps> = ({
                               </span>
                             )}
 
+                            {/* VALOR DA TAREFA: Exibido apenas se canViewPrices for verdadeiro */}
                             {measurementType === 'por_subitem' && task.unit_price > 0 && canViewPrices && (
                               <span className="text-[9px] sm:text-[10px] bg-emerald-50 text-emerald-800 border border-emerald-200 px-1.5 sm:px-2 py-0.5 rounded font-bold shrink-0">
                                 {task.unit_price.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
@@ -945,19 +946,18 @@ export const WorkItemRow: React.FC<WorkItemRowProps> = ({
                                 type="button"
                                 onClick={e => {
                                   e.stopPropagation();
-                                  setTaskToUnlink(task);
+                                  if (canManageItems) setTaskToUnlink(task);
                                 }}
-                                title="Clique para desvincular a dependência da tarefa"
-                                className="group flex items-center gap-1 text-[9px] sm:text-[10px] font-bold bg-amber-100/90 hover:bg-amber-200 text-amber-800 px-1.5 sm:px-2 py-0.5 rounded-full transition cursor-pointer border border-amber-200"
+                                title={canManageItems ? "Clique para desvincular a dependência da tarefa" : "Dependência ativa"}
+                                className={`group flex items-center gap-1 text-[9px] sm:text-[10px] font-bold bg-amber-100/90 text-amber-800 px-1.5 sm:px-2 py-0.5 rounded-full transition border border-amber-200 ${canManageItems ? 'hover:bg-amber-200 cursor-pointer' : 'cursor-default'}`}
                               >
                                 <Lock size={9} />
                                 <span className="truncate max-w-[120px] sm:max-w-none">Aguardando: {dependencyTask?.title}</span>
-                                <X size={11} className="ml-0.5 text-amber-600 group-hover:text-amber-900" />
+                                {canManageItems && <X size={11} className="ml-0.5 text-amber-600 group-hover:text-amber-900" />}
                               </button>
                             )}
                           </div>
 
-                          {/* Se bloqueada, exibe o aviso em vermelho */}
                           {isTaskBlockedManual && task.blocked_reason && (
                             <div className="mt-1.5 mb-1 bg-rose-100 border border-rose-200 text-rose-800 p-2 rounded-lg text-[10px] flex items-start gap-1.5">
                               <ShieldAlert size={12} className="shrink-0 mt-0.5 text-rose-600" />
@@ -1123,7 +1123,7 @@ export const WorkItemRow: React.FC<WorkItemRowProps> = ({
               )}
             </div>
 
-            {/* FORMULÁRIO DE ADIÇÃO DE SUBITEM (ADAPTADO PARA MOBILE) */}
+            {/* FORMULÁRIO DE ADIÇÃO DE SUBITEM */}
             {isAddingTask ? (
               <form onSubmit={handleCreateTaskSubmit} className="p-3 sm:p-3.5 bg-white border border-slate-200 rounded-2xl space-y-3 shadow-2xs">
                 <div className="flex items-center justify-between pb-2 border-b border-slate-100">
@@ -1510,7 +1510,6 @@ export const WorkItemRow: React.FC<WorkItemRowProps> = ({
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                {/* DATA DO APONTAMENTO */}
                 <div>
                   <label className="block text-[10px] font-bold text-slate-500 mb-1">Data do Serviço</label>
                   <input
@@ -1522,7 +1521,6 @@ export const WorkItemRow: React.FC<WorkItemRowProps> = ({
                   />
                 </div>
 
-                {/* QUANTIDADE FEITA NO DIA */}
                 {completingTask.has_progress_tracking ? (
                   <div>
                     <label className="block text-[10px] font-bold text-slate-500 mb-1">Qtd. feita HOJE ({completingTask.unit})</label>
@@ -1562,7 +1560,7 @@ export const WorkItemRow: React.FC<WorkItemRowProps> = ({
                 )}
               </div>
 
-              {/* SELEÇÃO DIRETA DOS COLABORADORES DA OBRA */}
+              {/* SELEÇÃO DOS COLABORADORES */}
               <div className="pt-1">
                 <div className="flex items-center justify-between mb-1.5">
                   <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
@@ -1618,7 +1616,6 @@ export const WorkItemRow: React.FC<WorkItemRowProps> = ({
                 </div>
               </div>
 
-              {/* OBSERVAÇÕES */}
               <div>
                 <label className="block text-[10px] font-bold text-slate-500 mb-1">Observações do dia (Opcional)</label>
                 <input
@@ -1768,7 +1765,7 @@ export const WorkItemRow: React.FC<WorkItemRowProps> = ({
                           }}
                           className="w-full text-left px-2.5 py-1.5 rounded-xl hover:bg-sky-50 text-xs font-semibold text-slate-800 flex flex-col cursor-pointer"
                         >
-                          <span className="truncate">{opt.title}</span>
+                          <span>{opt.title}</span>
                           <span className="text-[10px] text-slate-400 font-normal">Item: {opt.parentTitle}</span>
                         </button>
                       ))}

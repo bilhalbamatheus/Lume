@@ -40,6 +40,10 @@ export interface WorkItemData {
   assigned_to?: string | null;
   contact_id?: string | null;
   measurement_type?: 'por_subitem' | 'por_item' | 'sem_medicao';
+  opportunity?: {
+    id: string;
+    assigned_to?: string | null;
+  } | null;
   contact?: {
     id: string;
     display_name: string;
@@ -69,24 +73,22 @@ export const WorksView: React.FC<WorksViewProps> = ({
   const { permissions: hookPermissions, loading: loadingPerms } = usePermissions();
   const permissions = propPermissions || hookPermissions;
 
+  const currentUserId = user?.id || user?.profile?.id || (user as any)?.user?.id || null;
+
   const [works, setWorks] = useState<WorkItemData[]>([]);
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<'kanban' | 'list'>('kanban');
 
-  // Estado para visualização de detalhes da obra
   const [selectedWorkId, setSelectedWorkId] = useState<string | null>(null);
 
-  // Estados de Filtro de Status
   const [activeStatusTab, setActiveStatusTab] = useState<'em_andamento' | 'concluida' | 'todas'>('em_andamento');
   const [showPausedOnly, setShowPausedOnly] = useState<boolean>(false);
 
-  // Drag and Drop
   const [draggedWorkId, setDraggedWorkId] = useState<string | null>(null);
   const [dragOverStageId, setDragOverStageId] = useState<string | null>(null);
   const mouseCoordsRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const isDraggingRef = useRef(false);
 
-  // Filtros avançados
   const [search, setSearch] = useState('');
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [filterContactType, setFilterContactType] = useState<'all' | 'person' | 'company'>('all');
@@ -94,16 +96,10 @@ export const WorksView: React.FC<WorksViewProps> = ({
   const [filterDateRange, setFilterDateRange] = useState<'all' | 'this_month' | 'next_month' | 'overdue'>('all');
   const filterContainerRef = useRef<HTMLDivElement>(null);
 
-  // Modal de Configurações de Etapas
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
-
-  // Modal do Diário de Obra Global
   const [isDailyLogModalOpen, setIsDailyLogModalOpen] = useState(false);
-
-  // Action Sheet Mobile
   const [isMobileActionSheetOpen, setIsMobileActionSheetOpen] = useState(false);
 
-  // Etapas das Obras carregadas
   const [workStages, setWorkStages] = useState<WorkStageConfig[]>([]);
 
   const defaultStages: WorkStageConfig[] = useMemo(() => [
@@ -117,7 +113,6 @@ export const WorksView: React.FC<WorksViewProps> = ({
     return workStages.length > 0 ? workStages : defaultStages;
   }, [workStages, defaultStages]);
 
-  // Fecha dropdown do filtro ao clicar fora na Web
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (filterContainerRef.current && !filterContainerRef.current.contains(event.target as Node)) {
@@ -157,6 +152,8 @@ export const WorksView: React.FC<WorksViewProps> = ({
       const companyId = user?.company?.id;
       if (!companyId) return;
 
+      const isMasterAdmin = Boolean(permissions?.isOwnerOrAdmin);
+
       const { data, error } = await supabase
         .from('works')
         .select(`
@@ -173,6 +170,7 @@ export const WorksView: React.FC<WorksViewProps> = ({
           assigned_to,
           contact_id,
           measurement_type,
+          opportunity:opportunities!opportunity_id (id, assigned_to),
           contact:contacts!contact_id (id, display_name, type),
           assignee:profiles!assigned_to (id, full_name, avatar_url)
         `)
@@ -181,23 +179,48 @@ export const WorksView: React.FC<WorksViewProps> = ({
 
       if (error) throw error;
 
-      const formattedWorks: WorkItemData[] = (data || []).map((w: any) => ({
-        id: w.id,
-        code: w.code || null,
-        title: w.title,
-        stage: w.stage || 'planejamento',
-        status: w.status || 'em_andamento',
-        progress_percent: w.progress_percent || 0,
-        start_date: w.start_date,
-        estimated_completion_date: w.estimated_completion_date,
-        actual_completion_date: w.actual_completion_date,
-        updated_at: w.updated_at,
-        assigned_to: w.assigned_to,
-        contact_id: w.contact_id,
-        measurement_type: w.measurement_type || 'por_subitem',
-        contact: Array.isArray(w.contact) ? w.contact[0] : w.contact,
-        assignee: Array.isArray(w.assignee) ? w.assignee[0] : w.assignee
-      }));
+      let userAllocatedWorkIds = new Set<string>();
+      if (!isMasterAdmin && currentUserId) {
+        const { data: memberRecords } = await supabase
+          .from('work_members')
+          .select('work_id')
+          .eq('user_id', currentUserId);
+
+        userAllocatedWorkIds = new Set((memberRecords || []).map((m: any) => m.work_id));
+      }
+
+      const formattedWorks: WorkItemData[] = (data || [])
+        .map((w: any) => {
+          const opp = Array.isArray(w.opportunity) ? w.opportunity[0] : w.opportunity;
+          return {
+            id: w.id,
+            code: w.code || null,
+            title: w.title,
+            stage: w.stage || 'planejamento',
+            status: w.status || 'em_andamento',
+            progress_percent: w.progress_percent || 0,
+            start_date: w.start_date,
+            estimated_completion_date: w.estimated_completion_date,
+            actual_completion_date: w.actual_completion_date,
+            updated_at: w.updated_at,
+            assigned_to: w.assigned_to,
+            contact_id: w.contact_id,
+            measurement_type: w.measurement_type || 'por_subitem',
+            opportunity: opp || null,
+            contact: Array.isArray(w.contact) ? w.contact[0] : w.contact,
+            assignee: Array.isArray(w.assignee) ? w.assignee[0] : w.assignee
+          };
+        })
+        .filter((w: WorkItemData) => {
+          if (isMasterAdmin) return true;
+          if (!currentUserId) return false;
+
+          const isTechnicalResponsible = w.assigned_to === currentUserId;
+          const isCommercialResponsible = w.opportunity?.assigned_to === currentUserId;
+          const isAllocatedWorker = userAllocatedWorkIds.has(w.id);
+
+          return isTechnicalResponsible || isCommercialResponsible || isAllocatedWorker;
+        });
 
       setWorks(formattedWorks);
     } catch (err) {
@@ -205,7 +228,7 @@ export const WorksView: React.FC<WorksViewProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [user?.company?.id]);
+  }, [user?.company?.id, permissions?.isOwnerOrAdmin, currentUserId]);
 
   useEffect(() => {
     if (permissions?.canViewWorks) {
@@ -474,7 +497,6 @@ export const WorksView: React.FC<WorksViewProps> = ({
           </p>
         </div>
 
-        {/* Botão Nova Obra no Desktop */}
         {permissions?.canCreateWorks && (
           <div className="hidden md:flex items-center gap-2">
             <button
@@ -489,10 +511,8 @@ export const WorksView: React.FC<WorksViewProps> = ({
         )}
       </div>
 
-      {/* 2. BARRA DE CONTROLES: Pesquisa + Kanban/Lista na esquerda | Status + Filtro na direita */}
+      {/* 2. BARRA DE CONTROLES */}
       <div className="bg-white p-2 sm:p-2.5 rounded-2xl border border-slate-200/80 shadow-2xs mb-3 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-2.5 shrink-0">
-        
-        {/* Linha da Pesquisa + Alternador Kanban/Lista */}
         <div className="flex items-center gap-2 flex-1 min-w-0">
           <div className="relative flex-1 min-w-0">
             <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -513,7 +533,6 @@ export const WorksView: React.FC<WorksViewProps> = ({
             )}
           </div>
 
-          {/* Alternador Kanban / Lista ao lado da pesquisa */}
           <div className="flex items-center bg-slate-100/80 p-1 rounded-xl border border-slate-200/60 shrink-0">
             <button
               type="button"
@@ -540,10 +559,7 @@ export const WorksView: React.FC<WorksViewProps> = ({
           </div>
         </div>
 
-        {/* Grupo da Direita: Status das Obras + Filtro */}
         <div className="flex items-center gap-1.5 justify-between sm:justify-end shrink-0">
-          
-          {/* Status das Obras */}
           <div className="flex items-center gap-1 bg-slate-100/80 p-1 rounded-xl border border-slate-200/60 shrink-0 overflow-x-auto no-scrollbar flex-1 sm:flex-initial justify-between sm:justify-start">
             <button
               type="button"
@@ -552,7 +568,6 @@ export const WorksView: React.FC<WorksViewProps> = ({
                 setActiveStatusTab('em_andamento');
                 setShowPausedOnly(false);
               }}
-              title="Em Andamento"
               className={`flex items-center justify-center gap-1 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer disabled:opacity-40 shrink-0 ${
                 !showPausedOnly && activeStatusTab === 'em_andamento'
                   ? 'bg-white text-sky-700 shadow-xs'
@@ -575,7 +590,6 @@ export const WorksView: React.FC<WorksViewProps> = ({
                 setActiveStatusTab('concluida');
                 setShowPausedOnly(false);
               }}
-              title="Concluídas"
               className={`flex items-center justify-center gap-1 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer disabled:opacity-40 shrink-0 ${
                 !showPausedOnly && activeStatusTab === 'concluida'
                   ? 'bg-white text-emerald-700 shadow-xs'
@@ -598,7 +612,6 @@ export const WorksView: React.FC<WorksViewProps> = ({
                 setActiveStatusTab('todas');
                 setShowPausedOnly(false);
               }}
-              title="Todas as Obras"
               className={`flex items-center justify-center gap-1 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer disabled:opacity-40 shrink-0 ${
                 !showPausedOnly && activeStatusTab === 'todas'
                   ? 'bg-white text-slate-900 shadow-xs'
@@ -617,7 +630,6 @@ export const WorksView: React.FC<WorksViewProps> = ({
             <button
               type="button"
               onClick={() => setShowPausedOnly(!showPausedOnly)}
-              title={showPausedOnly ? "Voltar ao fluxo ativo" : "Filtrar apenas pausadas"}
               className={`flex items-center justify-center gap-1 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer shrink-0 ${
                 showPausedOnly
                   ? 'bg-amber-600 text-white shadow-xs'
@@ -634,7 +646,6 @@ export const WorksView: React.FC<WorksViewProps> = ({
             </button>
           </div>
 
-          {/* Botão de Filtros Ancorado */}
           <div className="relative shrink-0" ref={filterContainerRef}>
             <button
               type="button"
@@ -655,7 +666,6 @@ export const WorksView: React.FC<WorksViewProps> = ({
               )}
             </button>
 
-            {/* Popover Desktop */}
             {isFilterOpen && (
               <div className="hidden md:block absolute right-0 top-full mt-2 w-72 bg-white border border-slate-200 rounded-2xl shadow-xl p-4 z-50 animate-in fade-in zoom-in-95 duration-100 space-y-3 text-xs text-left">
                 <div className="flex items-center justify-between pb-2 border-b border-slate-100">
@@ -691,7 +701,6 @@ export const WorksView: React.FC<WorksViewProps> = ({
         </div>
       </div>
 
-      {/* Bottom Sheet Mobile */}
       {isFilterOpen && (
         <div className="md:hidden fixed inset-0 z-[150] flex flex-col justify-end bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-150">
           <div className="absolute inset-0" onClick={() => setIsFilterOpen(false)} />
@@ -755,7 +764,6 @@ export const WorksView: React.FC<WorksViewProps> = ({
                     : 'border-slate-200/90'
                 }`}
               >
-                {/* Topo da Coluna */}
                 <div 
                   className="p-3 bg-white border-b border-slate-200/80 shrink-0"
                   style={{ borderTop: `3px solid ${stageColor}` }}
@@ -774,7 +782,6 @@ export const WorksView: React.FC<WorksViewProps> = ({
                   </div>
                 </div>
 
-                {/* Cards das Obras */}
                 <div className="flex-1 min-h-0 overflow-y-auto p-2.5 space-y-2.5 no-scrollbar">
                   {loading ? (
                     <div className="h-28 flex items-center justify-center text-xs text-slate-400">
@@ -814,7 +821,6 @@ export const WorksView: React.FC<WorksViewProps> = ({
                               : 'border-slate-200/90 shadow-2xs hover:shadow-md hover:border-sky-300 active:scale-[0.99]'
                           }`}
                         >
-                          {/* Cabeçalho do Card */}
                           <div className="flex items-start justify-between gap-1.5">
                             <div className="flex-1 min-w-0 space-y-0.5">
                               {work.code && (
@@ -849,7 +855,6 @@ export const WorksView: React.FC<WorksViewProps> = ({
                             </div>
                           </div>
 
-                          {/* Cliente / Contato */}
                           {work.contact && (
                             <div 
                               onClick={(e) => {
@@ -870,7 +875,6 @@ export const WorksView: React.FC<WorksViewProps> = ({
                             </div>
                           )}
 
-                          {/* Barra de Progresso */}
                           <div className="mt-2.5 space-y-1">
                             <div className="flex justify-between text-[10px] font-bold text-slate-500">
                               <span>Progresso</span>
@@ -886,7 +890,6 @@ export const WorksView: React.FC<WorksViewProps> = ({
                             </div>
                           </div>
 
-                          {/* Rodapé: Previsão e Responsável */}
                           <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between text-xs">
                             <div className="flex items-center gap-1.5 text-slate-500 font-medium text-[11px]">
                               <Calendar size={13} className="text-slate-400 shrink-0" />
@@ -920,7 +923,6 @@ export const WorksView: React.FC<WorksViewProps> = ({
           })}
         </div>
       ) : (
-        /* VISUALIZAÇÃO EM LISTA */
         <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-2xs overflow-x-auto flex-1 min-h-0">
           <table className="w-full text-left text-xs text-slate-600 min-w-[650px]">
             <thead className="bg-slate-50/80 border-b border-slate-200 text-[11px] font-bold text-slate-700 uppercase tracking-wider">
@@ -1004,7 +1006,6 @@ export const WorksView: React.FC<WorksViewProps> = ({
         </div>
       )}
 
-      {/* BOTÃO FLUTUANTE NO DESKTOP: DIÁRIO DE OBRA */}
       {permissions?.canCompleteWorkTasks && !selectedWorkId && (
         <button
           type="button"
@@ -1017,7 +1018,6 @@ export const WorksView: React.FC<WorksViewProps> = ({
         </button>
       )}
 
-      {/* 4. BOTÃO FLUTUANTE (FAB) MOBILE */}
       {!selectedWorkId && (
         <button
           type="button"
@@ -1029,7 +1029,6 @@ export const WorksView: React.FC<WorksViewProps> = ({
         </button>
       )}
 
-      {/* ACTION SHEET MOBILE: Abre deslizando de baixo para cima */}
       {isMobileActionSheetOpen && (
         <div className="md:hidden fixed inset-0 z-[150] flex flex-col justify-end bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-150">
           <div className="absolute inset-0" onClick={() => setIsMobileActionSheetOpen(false)} />
@@ -1094,7 +1093,6 @@ export const WorksView: React.FC<WorksViewProps> = ({
         </div>
       )}
 
-      {/* MODAL DE CONFIGURAÇÕES DE ETAPAS DE OBRAS */}
       {permissions?.canCustomizeSystem && (
         <WorkSettingsModal
           isOpen={isSettingsModalOpen}
@@ -1103,7 +1101,6 @@ export const WorksView: React.FC<WorksViewProps> = ({
         />
       )}
 
-      {/* MODAL GLOBAL DO DIÁRIO DE OBRA */}
       <DailyWorkLogModal
         isOpen={isDailyLogModalOpen}
         onClose={() => setIsDailyLogModalOpen(false)}

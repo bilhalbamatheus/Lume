@@ -30,7 +30,8 @@ import {
   PlayCircle,
   ShieldAlert,
   ShieldCheck,
-  MoreVertical} from 'lucide-react';
+  MoreVertical,
+} from 'lucide-react';
 
 interface SettingOption {
   id: string;
@@ -332,7 +333,7 @@ export const WorkItemDrawer: React.FC<WorkItemDrawerProps> = ({
     t => t.title.toLowerCase().includes(depSearchTerm.toLowerCase())
   );
   const selectedNewDepObj = availableTasksList.find(t => t.id === taskDependsOnId);
-  const minNewStartDate = (selectedNewDepObj as any)?.due_date || (selectedNewDepObj as any)?.dueDate || undefined;
+  const minNewStartDate = selectedNewDepObj?.due_date || undefined;
 
   const filteredTeamMembers = entryTeamId === 'all' 
     ? teamMembers 
@@ -1278,7 +1279,7 @@ export const WorkItemDrawer: React.FC<WorkItemDrawerProps> = ({
                                   className="w-full text-left px-2.5 py-1.5 hover:bg-sky-50 text-xs font-semibold text-slate-800 flex flex-col cursor-pointer"
                                 >
                                   <span>{opt.title}</span>
-                                  <span className="text-[10px] text-slate-400 font-normal">Item: {(opt as any)?.parentTitle}</span>
+                                  <span className="text-[10px] text-slate-400 font-normal">Item: {opt.parentTitle}</span>
                                 </button>
                               ))}
                             </div>

@@ -67,7 +67,12 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
 }) => {
   const { user } = useAuth();
   const { permissions } = usePermissions();
+  const currentUserId = user?.id || user?.profile?.id || (user as any)?.user?.id || null;
+
   const [loading, setLoading] = useState(true);
+
+  // Dados da obra para checagem de responsável técnico e comercial
+  const [workData, setWorkData] = useState<{ assigned_to?: string | null; commercial_owner_id?: string | null } | null>(null);
 
   const [itemsTree, setItemsTree] = useState<WorkItem[]>([]);
   const [allItemsList, setAllItemsList] = useState<WorkItem[]>([]);
@@ -83,7 +88,7 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
   const [subitemTypeOptions, setSubitemTypeOptions] = useState<SettingOption[]>([]);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
 
-  // Modos de Visualização (Inicializa recolhido por padrão: false)
+  // Modos de Visualização
   const [viewMode, setViewMode] = useState<'tree' | 'items' | 'tasks'>('tree');
   const [isAllExpanded, setIsAllExpanded] = useState<boolean>(false);
 
@@ -164,6 +169,68 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
   const [isDailyLogModalOpen, setIsDailyLogModalOpen] = useState(false);
 
   const lastReportedProgressRef = useRef<number | null>(null);
+
+  // -------------------------------------------------------------
+  // REGRAS DAS 9 PERMISSÕES SIMPLIFICADAS
+  // -------------------------------------------------------------
+  
+  // Permissão 4: Gerenciar Estrutura EAP (criar, editar, duplicar, excluir)
+  const canManageEAP = Boolean(
+    permissions.isOwnerOrAdmin ||
+    permissions.canManageWorkStructure ||
+    permissions.canManageWorkItems
+  );
+
+  // Permissão 5: Apontar avanço e dar baixa
+  const canExecuteTasks = Boolean(
+    permissions.isOwnerOrAdmin ||
+    permissions.canExecuteWorkTasks ||
+    permissions.canCompleteWorkTasks
+  );
+
+  // Permissão 6: Reabrir tarefas
+  const canReopenTasks = Boolean(
+    permissions.isOwnerOrAdmin ||
+    permissions.canReopenWorkTasks
+  );
+
+  // REGRA ESTRITA: Visualizar valores em R$
+  // Só vê valores: Admin, Financeiro, Responsável Técnico ou Responsável Comercial
+  const canSeePrices = useMemo(() => {
+    if (permissions.isOwnerOrAdmin) return true;
+    if (permissions.canManageWorkFinancial || permissions.canViewWorkFinancial || permissions.canViewWorkPrices) return true;
+    if (!currentUserId || !workData) return false;
+
+    const isTechnicalResponsible = workData.assigned_to === currentUserId;
+    const isCommercialResponsible = workData.commercial_owner_id === currentUserId;
+
+    return isTechnicalResponsible || isCommercialResponsible;
+  }, [permissions, currentUserId, workData]);
+
+  // Carrega os responsáveis da obra para a regra de valores
+  useEffect(() => {
+    const fetchWorkResponsibles = async () => {
+      try {
+        const { data } = await supabase
+          .from('works')
+          .select('assigned_to, opportunity:opportunities!opportunity_id(assigned_to)')
+          .eq('id', workId)
+          .maybeSingle();
+
+        if (data) {
+          const opp = Array.isArray(data.opportunity) ? data.opportunity[0] : data.opportunity;
+          setWorkData({
+            assigned_to: data.assigned_to || null,
+            commercial_owner_id: opp?.assigned_to || null
+          });
+        }
+      } catch (err) {
+        console.warn('Erro ao carregar responsáveis da obra:', err);
+      }
+    };
+
+    if (workId) fetchWorkResponsibles();
+  }, [workId]);
 
   // Controla abertura e fechamento do Popover de Filtros via Portal
   useEffect(() => {
@@ -404,7 +471,7 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
   }, [loadWorkStructure, loadTeamMembersAndTeams, loadCustomSettings]);
 
   const handleOpenCreateModal = (parentId: string | null = null, parentTitle: string | null = null) => {
-    if (!permissions.canManageWorkItems) return;
+    if (!canManageEAP) return;
     setModalParentItem({ id: parentId, title: parentTitle });
     setItemFormTitle('');
     setItemFormCode('');
@@ -420,14 +487,14 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
 
   const handleSaveItemForm = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!permissions.canManageWorkItems || !itemFormTitle.trim()) return;
+    if (!canManageEAP || !itemFormTitle.trim()) return;
 
     try {
       setSavingItemForm(true);
       const companyId = user?.company?.id;
       if (!companyId) return;
 
-      const numPrice = permissions.canViewWorkPrices
+      const numPrice = canSeePrices
         ? parseFloat(itemFormPrice.replace(/\./g, '').replace(',', '.')) || 0
         : 0;
 
@@ -461,7 +528,7 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
   };
 
   const handleSaveTaskEntry = async (payload: DailyEntryPayload) => {
-    if (!permissions.canCompleteWorkTasks) return;
+    if (!canExecuteTasks) return;
     const companyId = user?.company?.id;
     if (!companyId) return;
 
@@ -491,11 +558,11 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
 
   const handleToggleTaskStatus = async (item: WorkItem, task: WorkTask, executors?: string[]) => {
     const isDone = task.status === 'concluida';
-    if (isDone && !permissions.canReopenWorkTasks) {
+    if (isDone && !canReopenTasks) {
       alert('Seu nível de acesso não permite reabrir tarefas concluídas.');
       return;
     }
-    if (!isDone && !permissions.canCompleteWorkTasks) {
+    if (!isDone && !canExecuteTasks) {
       alert('Seu nível de acesso não permite concluir tarefas.');
       return;
     }
@@ -534,7 +601,7 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
   };
 
   const handleUpdateTaskExecutedQty = async (item: WorkItem, task: WorkTask, rawVal: string) => {
-    if (!permissions.canCompleteWorkTasks) return;
+    if (!canExecuteTasks) return;
     const parsed = parseFloat(rawVal.replace(',', '.')) || 0;
     
     try {
@@ -568,12 +635,12 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
     isBlocked?: boolean,
     blockReasonParam?: string
   ) => {
-    if (!permissions.canCreateWorkTasks) return;
+    if (!canManageEAP) return;
     const companyId = user?.company?.id;
     if (!companyId) return;
 
     try {
-      const numPrice = permissions.canViewWorkPrices
+      const numPrice = canSeePrices
         ? parseFloat(price.replace(/\./g, '').replace(',', '.')) || 0
         : 0;
       const numQty = parseFloat(plannedQty.replace(',', '.')) || 1;
@@ -633,11 +700,11 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
 
   const handleSaveEditItem = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!permissions.canManageWorkItems || !editingItem || !editItemTitle.trim()) return;
+    if (!canManageEAP || !editingItem || !editItemTitle.trim()) return;
 
     try {
       setSavingEditItem(true);
-      const numPrice = permissions.canViewWorkPrices
+      const numPrice = canSeePrices
         ? parseFloat(editItemPrice.replace(/\./g, '').replace(',', '.')) || 0
         : editingItem.unit_price || 0;
 
@@ -664,7 +731,7 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
   };
 
   const handleConfirmDeleteItem = async () => {
-    if (!permissions.canDeleteWorkItems || !itemToDelete) return;
+    if (!canManageEAP || !itemToDelete) return;
     try {
       setDeletingItem(true);
       const { error } = await supabase.from('work_items').delete().eq('id', itemToDelete.id);
@@ -682,7 +749,7 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
   };
 
   const handleConfirmBatchDuplicate = async () => {
-    if (!permissions.canDuplicateWorkItems || !itemToBatchDuplicate) return;
+    if (!canManageEAP || !itemToBatchDuplicate) return;
     const companyId = user?.company?.id;
     if (!companyId || !workId) return;
 
@@ -769,7 +836,7 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
   };
 
   const handleSaveEditTask = async (task: WorkTask) => {
-    if (!permissions.canCreateWorkTasks && !permissions.canManageWorkItems) return;
+    if (!canManageEAP) return;
     try {
       const { error } = await supabase
         .from('work_tasks')
@@ -790,7 +857,7 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
   };
 
   const handleConfirmDeleteTask = async () => {
-    if (!permissions.canDeleteWorkItems || !taskToDelete) return;
+    if (!canManageEAP || !taskToDelete) return;
     try {
       setDeletingTask(true);
       const { error } = await supabase.from('work_tasks').delete().eq('id', taskToDelete.task.id);
@@ -812,10 +879,10 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
 
     const isDone = task.status === 'concluida';
     if (isDone) {
-      if (!permissions.canReopenWorkTasks) return;
+      if (!canReopenTasks) return;
       handleToggleTaskStatus(parentItem, task, []);
     } else {
-      if (!permissions.canCompleteWorkTasks) return;
+      if (!canExecuteTasks) return;
       setCompletingTask({ item: parentItem, task });
       setSelectedExecutors(task.executed_by || []);
       setEntryDate(new Date().toISOString().split('T')[0]);
@@ -831,7 +898,7 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
   };
 
   const handleConfirmTaskCompletionFromTable = async () => {
-    if (!completingTask) return;
+    if (!completingTask || !canExecuteTasks) return;
     try {
       setIsSavingEntry(true);
       const parsedQty = parseFloat(entryQty.replace(',', '.'));
@@ -861,13 +928,13 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
   };
 
   const toggleExecutor = (memberName: string) => {
-    if (!permissions.canAssignExecutors) return;
+    if (!canExecuteTasks) return;
     setSelectedExecutors(prev =>
       prev.includes(memberName) ? prev.filter(m => m !== memberName) : [...prev, memberName]
     );
   };
 
-  // Filtragem completa
+  // Filtragem completa da Árvore
   const filteredTree = useMemo(() => {
     const q = searchTerm.toLowerCase().trim();
 
@@ -978,9 +1045,7 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
   return (
     <div className="flex flex-col h-full space-y-3">
       
-      {/* ======================================================== */}
-      {/* LINHA 1: TÍTULO À ESQUERDA | TIPO DE VISUALIZAÇÃO À DIREITA */}
-      {/* ======================================================== */}
+      {/* 1. TOPO: TÍTULO À ESQUERDA | MODO DE VISUALIZAÇÃO À DIREITA */}
       <div className="flex items-center justify-between gap-3 pb-1 border-b border-slate-200/80 shrink-0">
         <div className="min-w-0">
           <h3 className="text-sm font-black text-slate-900 tracking-tight">
@@ -1028,12 +1093,8 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
         </div>
       </div>
 
-      {/* ======================================================== */}
-      {/* LINHA 2: RECOLHER TUDO | PESQUISA | FILTRO | NOVO COMPONENTE (DESKTOP ONLY) */}
-      {/* ======================================================== */}
+      {/* 2. CONTROLES: RECOLHER | PESQUISA | FILTRO | NOVO COMPONENTE */}
       <div className="flex items-center justify-between gap-2 shrink-0">
-        
-        {/* Lado Esquerdo: Recolher/Expandir + Campo de Busca Expandido */}
         <div className="flex items-center gap-2 flex-1 min-w-0">
           {viewMode === 'tree' && itemsTree.length > 0 && (
             <button
@@ -1046,7 +1107,6 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
             </button>
           )}
 
-          {/* Barra de Pesquisa */}
           <div className="relative flex-1">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
@@ -1068,10 +1128,7 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
           </div>
         </div>
 
-        {/* Lado Direito: Filtro Flutuante + Novo Componente (Apenas Desktop) */}
         <div className="flex items-center gap-2 shrink-0">
-          
-          {/* Botão de Filtro */}
           <button
             ref={filterButtonRef}
             type="button"
@@ -1091,8 +1148,7 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
             )}
           </button>
 
-          {/* Botão Novo Componente (Oculto no mobile via hidden sm:inline-flex) */}
-          {permissions.canManageWorkItems && (
+          {canManageEAP && (
             <button
               type="button"
               onClick={() => handleOpenCreateModal(null, null)}
@@ -1105,9 +1161,7 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
         </div>
       </div>
 
-      {/* ======================================================== */}
-      {/* POPOVER FLUTUANTE DE FILTROS (VIA PORTAL PARA NUNCA SER CORTADO) */}
-      {/* ======================================================== */}
+      {/* 3. POPOVER DE FILTROS */}
       {isFilterOpen && filterButtonCoords && createPortal(
         <div
           ref={filterPopoverRef}
@@ -1136,7 +1190,6 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
           </div>
 
           <div className="space-y-2.5 max-h-[70vh] overflow-y-auto pr-0.5">
-            {/* 1. Situação Operacional */}
             <div>
               <label className="block font-semibold text-slate-700 mb-1 text-[11px]">Situação das Tarefas</label>
               <select
@@ -1151,7 +1204,6 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
               </select>
             </div>
 
-            {/* 2. Local no Canteiro */}
             {locationOptions.length > 0 && (
               <div>
                 <label className="block font-semibold text-slate-700 mb-1 text-[11px]">Local / Setor</label>
@@ -1168,7 +1220,6 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
               </div>
             )}
 
-            {/* 3. Tipo de Componente */}
             {itemTypeOptions.length > 0 && (
               <div>
                 <label className="block font-semibold text-slate-700 mb-1 text-[11px]">Tipo de Componente</label>
@@ -1185,7 +1236,6 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
               </div>
             )}
 
-            {/* 4. Tipo de Subitem / Tarefa */}
             {subitemTypeOptions.length > 0 && (
               <div>
                 <label className="block font-semibold text-slate-700 mb-1 text-[11px]">Tipo de Tarefa / Subitem</label>
@@ -1202,7 +1252,6 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
               </div>
             )}
 
-            {/* 5. Executor Alocado */}
             {teamMembers.length > 0 && (
               <div>
                 <label className="block font-semibold text-slate-700 mb-1 text-[11px]">Colaborador / Executor</label>
@@ -1233,9 +1282,7 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
         document.body
       )}
 
-      {/* ======================================================== */}
-      {/* CORPO DA ABA COM VISUALIZAÇÃO DOS ITENS E TAREFAS */}
-      {/* ======================================================== */}
+      {/* 4. VISUALIZAÇÃO PRINCIPAL */}
       {loading ? (
         <div className="p-16 text-center text-xs text-slate-400">
           <Loader2 size={20} className="animate-spin mx-auto mb-2 text-sky-600" />
@@ -1243,7 +1290,7 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
         </div>
       ) : (
         <>
-          {/* 1. VISUALIZAÇÃO: ÁRVORE EAP */}
+          {/* MODO ÁRVORE */}
           {viewMode === 'tree' && (
             <div className="flex-1 min-h-0 overflow-y-auto border border-slate-200 rounded-2xl p-2.5 sm:p-3.5 bg-white space-y-3 shadow-2xs">
               {filteredTree.length === 0 ? (
@@ -1252,7 +1299,7 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
                   {itemsTree.length === 0 ? (
                     <>
                       <span className="font-semibold text-slate-700">Nenhum componente cadastrado.</span>
-                      {permissions.canManageWorkItems && (
+                      {canManageEAP && (
                         <button
                           type="button"
                           onClick={() => handleOpenCreateModal(null, null)}
@@ -1289,19 +1336,19 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
                     companyTeams={companyTeams}
                     itemTypes={itemTypeOptions}
                     subitemTypes={subitemTypeOptions}
-                    canManageItems={permissions.canManageWorkItems}
-                    canDeleteItems={permissions.canDeleteWorkItems}
-                    canDuplicateItems={permissions.canDuplicateWorkItems}
-                    canCreateTasks={permissions.canCreateWorkTasks}
-                    canCompleteTasks={permissions.canCompleteWorkTasks}
-                    canReopenTasks={permissions.canReopenWorkTasks}
-                    canViewPrices={permissions.canViewWorkPrices}
-                    canAssignExecutors={permissions.canAssignExecutors}
+                    canManageItems={canManageEAP}
+                    canDeleteItems={canManageEAP}
+                    canDuplicateItems={canManageEAP}
+                    canCreateTasks={canManageEAP}
+                    canCompleteTasks={canExecuteTasks}
+                    canReopenTasks={canReopenTasks}
+                    canViewPrices={canSeePrices}
+                    canAssignExecutors={canExecuteTasks}
                     onOpenQuickSettings={() => setIsSettingsModalOpen(true)}
                     onOpenItemDrawer={item => setSelectedDrawerItemId(item.id)}
                     onOpenCreateChildModal={(parentId, parentTitle) => handleOpenCreateModal(parentId, parentTitle)}
                     onOpenEditItemModal={item => {
-                      if (!permissions.canManageWorkItems) return;
+                      if (!canManageEAP) return;
                       setEditingItem(item);
                       setEditItemTitle(item.title);
                       setEditItemCode(item.code || '');
@@ -1311,11 +1358,11 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
                       setEditItemPrice(item.unit_price ? item.unit_price.toString() : '');
                     }}
                     onOpenDeleteItemModal={item => {
-                      if (!permissions.canDeleteWorkItems) return;
+                      if (!canManageEAP) return;
                       setItemToDelete(item);
                     }}
                     onDuplicateItem={item => {
-                      if (!permissions.canDuplicateWorkItems) return;
+                      if (!canManageEAP) return;
                       setItemToBatchDuplicate(item);
                       setDuplicateQuantity(1);
                       setDuplicateStartIndex(1);
@@ -1325,7 +1372,7 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
                     onUpdateTaskExecutedQty={handleUpdateTaskExecutedQty}
                     onOpenEditTaskModal={handleSaveEditTask}
                     onOpenDeleteTaskModal={(task, parentItemId) => {
-                      if (!permissions.canDeleteWorkItems) return;
+                      if (!canManageEAP) return;
                       setTaskToDelete({ task, parentItemId });
                     }}
                     onSaveInlineTask={handleSaveInlineTask}
@@ -1335,7 +1382,7 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
             </div>
           )}
 
-          {/* 2. VISUALIZAÇÃO: LISTA DE ITENS */}
+          {/* MODO LISTA DE ITENS */}
           {viewMode === 'items' && (
             <div className="flex-1 min-h-0 overflow-y-auto border border-slate-200 rounded-2xl bg-white shadow-2xs overflow-hidden">
               <div className="overflow-x-auto">
@@ -1494,33 +1541,33 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
                             </td>
                             <td className="py-3 px-4 text-right" onClick={e => e.stopPropagation()}>
                               <div className="flex items-center justify-end gap-1">
-                                {permissions.canManageWorkItems && (
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setEditingItem(item);
-                                      setEditItemTitle(item.title);
-                                      setEditItemCode(item.code || '');
-                                      setEditItemType(item.item_type || '');
-                                      setEditItemLocation(item.location || '');
-                                      setEditItemDescription(item.description || '');
-                                      setEditItemPrice(item.unit_price ? item.unit_price.toString() : '');
-                                    }}
-                                    className="p-1.5 text-slate-400 hover:text-sky-600 hover:bg-sky-50 rounded-lg transition cursor-pointer"
-                                    title="Editar componente"
-                                  >
-                                    <Edit2 size={13} />
-                                  </button>
-                                )}
-                                {permissions.canDeleteWorkItems && (
-                                  <button
-                                    type="button"
-                                    onClick={() => setItemToDelete(item)}
-                                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
-                                    title="Excluir componente"
-                                  >
-                                    <Trash2 size={13} />
-                                  </button>
+                                {canManageEAP && (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setEditingItem(item);
+                                        setEditItemTitle(item.title);
+                                        setEditItemCode(item.code || '');
+                                        setEditItemType(item.item_type || '');
+                                        setEditItemLocation(item.location || '');
+                                        setEditItemDescription(item.description || '');
+                                        setEditItemPrice(item.unit_price ? item.unit_price.toString() : '');
+                                      }}
+                                      className="p-1.5 text-slate-400 hover:text-sky-600 hover:bg-sky-50 rounded-lg transition cursor-pointer"
+                                      title="Editar componente"
+                                    >
+                                      <Edit2 size={13} />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setItemToDelete(item)}
+                                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                                      title="Excluir componente"
+                                    >
+                                      <Trash2 size={13} />
+                                    </button>
+                                  </>
                                 )}
                               </div>
                             </td>
@@ -1534,7 +1581,7 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
             </div>
           )}
 
-          {/* 3. VISUALIZAÇÃO: LISTA DE TAREFAS */}
+          {/* MODO LISTA DE TAREFAS */}
           {viewMode === 'tasks' && (
             <div className="flex-1 min-h-0 overflow-y-auto border border-slate-200 rounded-2xl bg-white shadow-2xs overflow-hidden">
               <div className="overflow-x-auto">
@@ -1576,7 +1623,7 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
                         const isParentItemBlocked = parentDepItem ? (parentDepItem.progress_percent || 0) < 100 : false;
 
                         const isBlockedByDependency = isDepTaskBlocked || isParentItemBlocked;
-                        const canToggle = (isDone ? permissions.canReopenWorkTasks : permissions.canCompleteWorkTasks) && !isTaskBlockedManual;
+                        const canToggle = (isDone ? canReopenTasks : canExecuteTasks) && !isTaskBlockedManual;
                         const taskExecutors: string[] = task.executed_by || [];
                         const isHovered = hoveredTreeItemId === task.id;
 
@@ -1789,8 +1836,8 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
         teamMembers={teamMembers}
         subitemTypes={subitemTypeOptions}
         measurementType={measurementType}
-        canCompleteTasks={permissions.canCompleteWorkTasks}
-        canReopenTasks={permissions.canReopenWorkTasks}
+        canCompleteTasks={canExecuteTasks}
+        canReopenTasks={canReopenTasks}
         onToggleTaskStatus={handleToggleTaskStatus}
         onSaveTaskEntry={handleSaveTaskEntry} 
         onSaveInlineTask={handleSaveInlineTask}
@@ -1798,7 +1845,7 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
       />
 
       {/* MODAL: CRIAR COMPONENTE */}
-      {isCreateItemModalOpen && (
+      {isCreateItemModalOpen && canManageEAP && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/60 backdrop-blur-2xs animate-in fade-in duration-150">
           <div className="bg-white border border-slate-200 rounded-3xl p-5 sm:p-7 max-w-lg w-full shadow-2xl animate-in zoom-in-95 duration-150 max-h-[92vh] overflow-y-auto">
             <div className="flex items-center justify-between pb-3.5 border-b border-slate-100 mb-3.5">
@@ -1975,7 +2022,7 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
                 </select>
               </div>
 
-              {measurementType === 'por_item' && permissions.canViewWorkPrices && (
+              {measurementType === 'por_item' && canSeePrices && (
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1 flex items-center gap-1">
                     <DollarSign size={12} className="text-slate-400" />
@@ -2027,8 +2074,8 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
         </div>
       )}
 
-      {/* Modal: Editar Item */}
-      {editingItem && (
+      {/* MODAL: EDITAR COMPONENTE */}
+      {editingItem && canManageEAP && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/60 backdrop-blur-2xs animate-in fade-in duration-150">
           <div className="bg-white border border-slate-200 rounded-3xl p-5 sm:p-6 max-w-md w-full shadow-2xl animate-in zoom-in-95 duration-150 max-h-[92vh] overflow-y-auto">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
@@ -2104,7 +2151,7 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
                 />
               </div>
 
-              {measurementType === 'por_item' && permissions.canViewWorkPrices && (
+              {measurementType === 'por_item' && canSeePrices && (
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">Valor Unitário (R$)</label>
                   <input
@@ -2139,7 +2186,7 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
       )}
 
       {/* MODAL: DUPLICAÇÃO EM LOTE */}
-      {itemToBatchDuplicate && (
+      {itemToBatchDuplicate && canManageEAP && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/60 backdrop-blur-2xs animate-in fade-in duration-150">
           <div className="bg-white border border-slate-200 rounded-3xl p-5 sm:p-7 max-w-md w-full shadow-2xl space-y-4 animate-in zoom-in-95 duration-150 text-xs max-h-[92vh] overflow-y-auto">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
@@ -2231,8 +2278,8 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
         </div>
       )}
 
-      {/* Modal: Excluir Item */}
-      {itemToDelete && (
+      {/* MODAL: EXCLUIR ITEM */}
+      {itemToDelete && canManageEAP && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-2xs animate-in fade-in duration-150">
           <div className="bg-white border border-slate-200 rounded-3xl p-6 max-w-sm w-full shadow-2xl text-center space-y-4">
             <div className="w-12 h-12 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center mx-auto border border-rose-100">
@@ -2266,8 +2313,8 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
         </div>
       )}
 
-      {/* Modal: Excluir Tarefa */}
-      {taskToDelete && (
+      {/* MODAL: EXCLUIR TAREFA */}
+      {taskToDelete && canManageEAP && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-2xs animate-in fade-in duration-150">
           <div className="bg-white border border-slate-200 rounded-3xl p-6 max-w-sm w-full shadow-2xl text-center space-y-4">
             <div className="w-12 h-12 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center mx-auto border border-rose-100">
@@ -2302,7 +2349,7 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
       )}
 
       {/* MODAL: APONTAMENTO AO CONCLUIR TAREFA NA TABELA CORRIDA DE TAREFAS */}
-      {completingTask && (
+      {completingTask && canExecuteTasks && (
         <div className="fixed inset-0 z-[170] flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-xs animate-in fade-in duration-150">
           <div className="bg-white border border-slate-200 rounded-3xl w-full max-w-md p-4 sm:p-6 shadow-2xl space-y-4 animate-in zoom-in-95 duration-150 max-h-[92vh] flex flex-col">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100 shrink-0">
@@ -2394,7 +2441,7 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
                 )}
               </div>
 
-              {/* SELEÇÃO DOS COLABORADORES DA OBRA */}
+              {/* SELEÇÃO DOS COLABORADORES */}
               <div className="pt-1">
                 <div className="flex items-center justify-between mb-1.5">
                   <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
@@ -2414,13 +2461,12 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
                         <button
                           type="button"
                           key={member.id}
-                          disabled={!permissions.canAssignExecutors}
                           onClick={() => toggleExecutor(member.name)}
                           className={`w-full p-2 rounded-xl text-left border transition flex items-center justify-between cursor-pointer ${
                             isSelected
                               ? 'bg-sky-50 border-sky-300 text-sky-900 font-bold shadow-2xs'
                               : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100 font-medium'
-                          } ${!permissions.canAssignExecutors ? 'opacity-70 cursor-not-allowed' : ''}`}
+                          }`}
                         >
                           <div className="flex items-center gap-2 min-w-0">
                             <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold border overflow-hidden shrink-0 ${
@@ -2486,7 +2532,7 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
       )}
 
       {/* MODAL: BLOQUEAR TAREFA MANUALMENTE */}
-      {blockingTask && (
+      {blockingTask && canExecuteTasks && (
         <div className="fixed inset-0 z-[160] flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-xs animate-in fade-in duration-150">
           <div className="bg-white border border-slate-200 rounded-3xl w-full max-w-sm p-6 shadow-2xl space-y-4 animate-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
@@ -2540,7 +2586,7 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
         </div>
       )}
 
-      {/* Modal Rápido de Configurações Operacionais */}
+      {/* MODAL DE CONFIGURAÇÕES OPERACIONAIS */}
       <WorkCustomSettingsModal
         isOpen={isSettingsModalOpen}
         onClose={() => setIsSettingsModalOpen(false)}
@@ -2549,8 +2595,8 @@ export const WorkItemsTasksTab: React.FC<WorkItemsTasksTabProps> = ({
         onUpdated={loadCustomSettings}
       />
 
-      {/* BOTÃO FLUTUANTE DIÁRIO DE OBRA */}
-      {permissions.canCompleteWorkTasks && (
+      {/* BOTÃO FLUTUANTE DIÁRIO DE OBRA (Permissão 5) */}
+      {canExecuteTasks && (
         <button
           type="button"
           onClick={() => setIsDailyLogModalOpen(true)}

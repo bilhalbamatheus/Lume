@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import { usePermissions } from '../hooks/usePermissions';
 import { WorkMeasurementPrintView } from './WorkMeasurementPrintView';
 import {
   CheckCircle2,
@@ -15,7 +16,8 @@ import {
   Save,
   CreditCard,
   Check,
-  Printer
+  Printer,
+  Lock
 } from 'lucide-react';
 
 interface WorkMeasurement {
@@ -98,6 +100,10 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
   measurementType = 'por_subitem'
 }) => {
   const { user } = useAuth();
+  const { permissions, loading: loadingPerms } = usePermissions();
+
+  const currentUserId = user?.id || user?.profile?.id || (user as any)?.user?.id || null;
+
   const [loading, setLoading] = useState(true);
   const [activeSubTab, setActiveSubTab] = useState<'measurements' | 'invoices'>('measurements');
 
@@ -105,6 +111,7 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
   const [invoices, setInvoices] = useState<WorkInvoice[]>([]);
   const [workItems, setWorkItems] = useState<any[]>([]);
   const [workTasks, setWorkTasks] = useState<any[]>([]);
+  const [workMeta, setWorkMeta] = useState<{ assigned_to?: string | null; commercial_owner_id?: string | null } | null>(null);
   
   // Apontamentos Diários (Apenas os NÃO medidos)
   const [taskEntries, setTaskEntries] = useState<any[]>([]);
@@ -141,6 +148,52 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
   const [invoiceBmId, setInvoiceBmId] = useState<string | null>(null);
   const [savingInvoice, setSavingInvoice] = useState(false);
 
+  // -------------------------------------------------------------
+  // REGRAS DAS PERMISSÕES SIMPLIFICADAS
+  // -------------------------------------------------------------
+  const canAccessFinancial = Boolean(
+    permissions.isOwnerOrAdmin ||
+    permissions.canManageWorkFinancial ||
+    permissions.canViewWorkFinancial
+  );
+
+  // REGRA ESTRITA: Ver valores em R$
+  const canSeePrices = useMemo(() => {
+    if (permissions.isOwnerOrAdmin) return true;
+    if (permissions.canManageWorkFinancial || permissions.canViewWorkFinancial || permissions.canViewWorkPrices) return true;
+    if (!currentUserId || !workMeta) return false;
+
+    const isTechnicalResponsible = workMeta.assigned_to === currentUserId;
+    const isCommercialResponsible = workMeta.commercial_owner_id === currentUserId;
+
+    return isTechnicalResponsible || isCommercialResponsible;
+  }, [permissions, currentUserId, workMeta]);
+
+  // Carrega os responsáveis da obra para validar Técnico/Comercial
+  useEffect(() => {
+    const fetchWorkMeta = async () => {
+      try {
+        const { data } = await supabase
+          .from('works')
+          .select('assigned_to, opportunity:opportunities!opportunity_id(assigned_to)')
+          .eq('id', workId)
+          .maybeSingle();
+
+        if (data) {
+          const opp = Array.isArray(data.opportunity) ? data.opportunity[0] : data.opportunity;
+          setWorkMeta({
+            assigned_to: data.assigned_to || null,
+            commercial_owner_id: opp?.assigned_to || null
+          });
+        }
+      } catch (err) {
+        console.warn('Erro ao carregar dados do responsável da obra:', err);
+      }
+    };
+
+    if (workId) fetchWorkMeta();
+  }, [workId]);
+
   const loadFinancialData = useCallback(async () => {
     try {
       setLoading(true);
@@ -165,7 +218,7 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
           .from('work_task_entries')
           .select('*')
           .eq('work_id', workId)
-          .eq('is_measured', false) // Busca apenas apontamentos não faturados
+          .eq('is_measured', false)
           .order('entry_date', { ascending: true })
       ]);
 
@@ -197,8 +250,10 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
   }, [workId]);
 
   useEffect(() => {
-    loadFinancialData();
-  }, [loadFinancialData]);
+    if (canAccessFinancial) {
+      loadFinancialData();
+    }
+  }, [loadFinancialData, canAccessFinancial]);
 
   // Mapas rápidos
   const itemsMap = useMemo(() => {
@@ -213,7 +268,6 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
     return map;
   }, [workTasks]);
 
-  // Retorna cadeia de pais: [Item, Pai, ..., Raiz]
   const getHierarchyArray = useCallback((itemId: string | null | undefined): any[] => {
     if (!itemId) return [];
     const chain: any[] = [];
@@ -233,7 +287,6 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
     return chain;
   }, [itemsMap]);
 
-  // Monta a string "Subitem / Item / ... / Item Raiz /"
   const getFullHierarchyTitle = useCallback((it: WorkMeasurementItem): string => {
     let targetItemId = it.work_item_id;
     let baseTitle = it.item_title.replace(/\/+$/, '').trim();
@@ -256,7 +309,6 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
     return it.item_title.endsWith('/') ? it.item_title : `${it.item_title} /`;
   }, [itemsMap, tasksMap, getHierarchyArray]);
 
-  // Filtra APONTAMENTOS DIÁRIOS disponíveis dentro do período selecionado e que tenham valor executado maior que 0
   const availableEntriesToMeasure = useMemo(() => {
     if (!bmStartDate || !bmEndDate) return [];
     
@@ -267,9 +319,6 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
     });
   }, [taskEntries, bmStartDate, bmEndDate]);
 
-  // Agrupa os apontamentos disponíveis por Tarefa para visualização amigável
-
-  // Filtra itens aptos (se a medição for apenas por Item - Fallback Antigo)
   const availableItems = useMemo(() => {
     return workItems.filter(i => {
       const notMeasured = !i.is_measured;
@@ -290,7 +339,6 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
     setBmNotes('');
     setManualAmount('');
 
-    // Pré-seleciona todos os apontamentos soltos daquele período que têm quantidade > 0
     const initialAvailableEntries = taskEntries.filter(e => {
       const qty = Number(e.quantity_executed) || 0;
       return e.entry_date >= startOfMonth && e.entry_date <= today && qty > 0;
@@ -305,7 +353,6 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
     setIsCreateBmModalOpen(true);
   };
 
-  // Recalcula a seleção de apontamentos toda vez que a data de filtro mudar no Modal
   useEffect(() => {
     if (isCreateBmModalOpen && measurementType === 'por_subitem') {
       setSelectedEntryIds(availableEntriesToMeasure.map(e => e.id));
@@ -327,8 +374,6 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
         }, 0);
     }
 
-    // Calcula com base nos APONTAMENTOS DE TAREFAS selecionados
-    // CÁLCULO PROPORCIONAL: O preço da tarefa no BD é o Valor Total. Dividimos pelo planejado para achar o preço por unidade (metro, etc).
     return availableEntriesToMeasure
       .filter(entry => selectedEntryIds.includes(entry.id))
       .reduce((acc, entry) => {
@@ -336,7 +381,7 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
         if (!task) return acc;
 
         const qty = Number(entry.quantity_executed) || 0;
-        const planned = Number(task.quantity_planned) || 1; // Para evitar divisão por zero
+        const planned = Number(task.quantity_planned) || 1;
         const priceTotal = Number(task.unit_price) || 0;
         const unitPrice = priceTotal / planned;
 
@@ -436,7 +481,6 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
           });
         });
       } else if (measurementType === 'por_subitem') {
-        // Agrupa os APONTAMENTOS selecionados por Tarefa para consolidar em uma linha no BM
         const selectedEntries = availableEntriesToMeasure.filter(e => selectedEntryIds.includes(e.id));
         entryIdsToUpdate = selectedEntries.map(e => e.id);
 
@@ -454,8 +498,6 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
           const t = summary.task;
           const qty = summary.qty;
           const planned = Number(t.quantity_planned) || 1;
-          
-          // O preço no BD é o Total. O Unitário fracionado para salvar na linha da medição será:
           const priceTotal = Number(t.unit_price) || 0;
           const unitPrice = priceTotal / planned;
           const taskAmount = qty * unitPrice;
@@ -469,9 +511,9 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
             item_title: fullTitle,
             unit: t.unit || 'un',
             quantity_planned: planned,
-            quantity_executed: t.quantity_executed, // Total histórico até agora
-            quantity_measured_period: qty, // Total apenas desse BM
-            unit_price: unitPrice, // Salvamos o unitário fracionado para a fatura detalhada ficar correta
+            quantity_executed: t.quantity_executed,
+            quantity_measured_period: qty,
+            unit_price: unitPrice,
             measured_amount: taskAmount,
             progress_percent: t.status === 'concluida' ? 100 : (planned > 0 ? (t.quantity_executed / planned) * 100 : 0)
           });
@@ -507,7 +549,6 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
       }
 
       if (measurementType === 'por_subitem' && entryIdsToUpdate.length > 0 && createdBm) {
-        // Marca exatamente os apontamentos medidos como concluídos na medição
         await supabase
           .from('work_task_entries')
           .update({ is_measured: true, measurement_id: createdBm.id })
@@ -627,6 +668,20 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
     }
   };
 
+  if (!loadingPerms && !canAccessFinancial) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center p-12 text-center bg-slate-50/50 rounded-2xl border border-slate-200">
+        <div className="w-12 h-12 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-400 mb-3 border border-slate-200">
+          <Lock size={22} />
+        </div>
+        <h4 className="font-bold text-slate-800 text-sm mb-1">Acesso Restrito ao Financeiro</h4>
+        <p className="text-xs text-slate-500 max-w-sm">
+          Seu perfil de acesso atual não possui permissão para visualizar ou gerenciar a parte financeira e medições desta obra.
+        </p>
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center h-full text-slate-400 text-xs py-20">
@@ -643,7 +698,7 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
         <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-2xs space-y-1">
           <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Valor do Contrato</span>
           <strong className="text-slate-900 text-base lg:text-lg font-black block">
-            {formatCurrency(kpis.contractAmount)}
+            {canSeePrices ? formatCurrency(kpis.contractAmount) : 'R$ —'}
           </strong>
           <span className="text-[10px] text-slate-500 font-medium">Contrato homologado</span>
         </div>
@@ -654,7 +709,7 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
             <span className="text-[10px] font-black text-sky-600">{kpis.measuredPercent}%</span>
           </div>
           <strong className="text-sky-900 text-base lg:text-lg font-black block">
-            {formatCurrency(kpis.totalMeasured)}
+            {canSeePrices ? formatCurrency(kpis.totalMeasured) : 'R$ —'}
           </strong>
           <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
             <div className="h-1.5 rounded-full bg-sky-500" style={{ width: `${kpis.measuredPercent}%` }} />
@@ -667,7 +722,7 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
             <span>Total Recebido</span>
           </span>
           <strong className="text-emerald-900 text-base lg:text-lg font-black block">
-            {formatCurrency(kpis.totalPaid)}
+            {canSeePrices ? formatCurrency(kpis.totalPaid) : 'R$ —'}
           </strong>
           <span className="text-[10px] text-emerald-600 font-medium">Faturas quitadas</span>
         </div>
@@ -678,7 +733,7 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
             <span>A Receber / Faturar</span>
           </span>
           <strong className="text-amber-900 text-base lg:text-lg font-black block">
-            {formatCurrency(kpis.pendingToReceive)}
+            {canSeePrices ? formatCurrency(kpis.pendingToReceive) : 'R$ —'}
           </strong>
           <span className="text-[10px] text-amber-600 font-medium">Faturas em aberto</span>
         </div>
@@ -778,13 +833,13 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
                         {new Date(bm.start_date + 'T00:00:00').toLocaleDateString('pt-BR')} até {new Date(bm.end_date + 'T00:00:00').toLocaleDateString('pt-BR')}
                       </td>
                       <td className="py-3 px-4 font-bold text-slate-800">
-                        {formatCurrency(Number(bm.total_measured_amount) || 0)}
+                        {canSeePrices ? formatCurrency(Number(bm.total_measured_amount) || 0) : 'R$ —'}
                       </td>
                       <td className="py-3 px-4 text-slate-500">
                         {bm.retention_percent > 0 ? `${bm.retention_percent}%` : '—'}
                       </td>
                       <td className="py-3 px-4 font-black text-emerald-800">
-                        {formatCurrency(Number(bm.net_amount) || 0)}
+                        {canSeePrices ? formatCurrency(Number(bm.net_amount) || 0) : 'R$ —'}
                       </td>
                       <td className="py-3 px-4">{getBmStatusBadge(bm.status)}</td>
                       <td className="py-3 px-4 text-right" onClick={e => e.stopPropagation()}>
@@ -863,7 +918,7 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
                         {inv.payment_method || 'Boleto'}
                       </td>
                       <td className="py-3 px-4 font-black text-slate-900 text-sm">
-                        {formatCurrency(Number(inv.amount) || 0)}
+                        {canSeePrices ? formatCurrency(Number(inv.amount) || 0) : 'R$ —'}
                       </td>
                       <td className="py-3 px-4">{getInvoiceStatusBadge(inv.status)}</td>
                       <td className="py-3 px-4 text-right">
@@ -963,7 +1018,7 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
                 </div>
               </div>
 
-              {/* LISTAGEM DE ITENS (APONTAMENTOS) */}
+              {/* LISTAGEM DE APONTAMENTOS */}
               <div className="flex-1 min-h-0 flex flex-col border border-slate-200 rounded-2xl p-3 bg-slate-50/50">
                 {measurementType === 'por_subitem' ? (
                   <>
@@ -1006,7 +1061,6 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
                           const isChecked = selectedEntryIds.includes(entry.id);
                           const qty = Number(entry.quantity_executed) || 0;
                           
-                          // Cálculo do Preço Unitário Proporcional
                           const planned = Number(task.quantity_planned) || 1;
                           const priceTotal = Number(task.unit_price) || 0;
                           const unitPrice = priceTotal / planned;
@@ -1054,20 +1108,24 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
                                       </span>
                                     )}
                                   </div>
-                                  <div className="flex items-center gap-2 text-[10px] text-slate-400">
-                                    <span>Valor Total Planejado: {formatCurrency(priceTotal)}</span>
-                                    <span className="text-slate-300">|</span>
-                                    <span className="text-sky-700 font-semibold">Valor Unitário: {formatCurrency(unitPrice)} /{task.unit || 'un'}</span>
-                                  </div>
+                                  {canSeePrices && (
+                                    <div className="flex items-center gap-2 text-[10px] text-slate-400">
+                                      <span>Total Planejado: {formatCurrency(priceTotal)}</span>
+                                      <span className="text-slate-300">|</span>
+                                      <span className="text-sky-700 font-semibold">Unitário: {formatCurrency(unitPrice)} /{task.unit || 'un'}</span>
+                                    </div>
+                                  )}
                                 </div>
                               </div>
                               <div className="text-right shrink-0 flex flex-col items-end justify-center gap-1">
                                 <div className="text-[11px] font-bold text-slate-600 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
                                   {qty} {task.unit || 'un'}
                                 </div>
-                                <strong className="text-slate-900 font-black text-xs">
-                                  {formatCurrency(total)}
-                                </strong>
+                                {canSeePrices && (
+                                  <strong className="text-slate-900 font-black text-xs">
+                                    {formatCurrency(total)}
+                                  </strong>
+                                )}
                               </div>
                             </label>
                           );
@@ -1145,13 +1203,15 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
                                     ))}
                                   </div>
                                   <span className="text-[10px] text-slate-400 block">
-                                    Progresso: {prog}% | Preço: {formatCurrency(price)}
+                                    Progresso: {prog}% {canSeePrices ? `| Preço: ${formatCurrency(price)}` : ''}
                                   </span>
                                 </div>
                               </div>
-                              <strong className="text-slate-900 font-black text-xs shrink-0 pt-0.5">
-                                {formatCurrency(total)}
-                              </strong>
+                              {canSeePrices && (
+                                <strong className="text-slate-900 font-black text-xs shrink-0 pt-0.5">
+                                  {formatCurrency(total)}
+                                </strong>
+                              )}
                             </label>
                           );
                         })
@@ -1177,20 +1237,22 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
               </div>
 
               {/* TOTAIS */}
-              <div className="grid grid-cols-3 gap-3 p-3 bg-slate-100 rounded-xl shrink-0">
-                <div>
-                  <span className="text-[10px] font-bold text-slate-500 uppercase block">Total Bruto</span>
-                  <strong className="text-slate-900 text-sm font-black">{formatCurrency(computedGrossAmount)}</strong>
+              {canSeePrices && (
+                <div className="grid grid-cols-3 gap-3 p-3 bg-slate-100 rounded-xl shrink-0">
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-500 uppercase block">Total Bruto</span>
+                    <strong className="text-slate-900 text-sm font-black">{formatCurrency(computedGrossAmount)}</strong>
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-bold text-amber-700 uppercase block">Retenção ({bmRetention}%)</span>
+                    <strong className="text-amber-800 text-sm font-black">{formatCurrency(computedRetentionAmount)}</strong>
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-bold text-emerald-700 uppercase block">Total Líquido</span>
+                    <strong className="text-emerald-900 text-sm font-black">{formatCurrency(computedNetAmount)}</strong>
+                  </div>
                 </div>
-                <div>
-                  <span className="text-[10px] font-bold text-amber-700 uppercase block">Retenção ({bmRetention}%)</span>
-                  <strong className="text-amber-800 text-sm font-black">{formatCurrency(computedRetentionAmount)}</strong>
-                </div>
-                <div>
-                  <span className="text-[10px] font-bold text-emerald-700 uppercase block">Total Líquido</span>
-                  <strong className="text-emerald-900 text-sm font-black">{formatCurrency(computedNetAmount)}</strong>
-                </div>
-              </div>
+              )}
 
               <div className="pt-2 flex justify-end gap-2 border-t border-slate-100 shrink-0">
                 <button
@@ -1320,11 +1382,10 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
         </div>
       )}
 
-      {/* MODAL: ESPELHO / DETALHE DO BOLETIM */}
+      {/* MODAL: DETALHES DO BOLETIM */}
       {viewingMeasurement && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs animate-in fade-in duration-150">
           <div className="bg-white border border-slate-200 rounded-3xl w-full max-w-4xl p-6 shadow-2xl space-y-4 max-h-[90vh] flex flex-col">
-            
             <div className="flex items-start justify-between pb-3 border-b border-slate-200 shrink-0">
               <div className="space-y-1">
                 <div className="flex items-center gap-2">
@@ -1348,26 +1409,32 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
               </button>
             </div>
 
-            <div className="grid grid-cols-3 gap-3 p-3.5 bg-slate-50 rounded-2xl border border-slate-200/80 text-xs shrink-0">
-              <div>
-                <span className="text-[10px] text-slate-400 font-bold uppercase block">Valor Medido Bruto</span>
-                <strong className="text-slate-900 text-sm font-black">
-                  {formatCurrency(Number(viewingMeasurement.total_measured_amount) || 0)}
-                </strong>
+            {canSeePrices ? (
+              <div className="grid grid-cols-3 gap-3 p-3.5 bg-slate-50 rounded-2xl border border-slate-200/80 text-xs shrink-0">
+                <div>
+                  <span className="text-[10px] text-slate-400 font-bold uppercase block">Valor Medido Bruto</span>
+                  <strong className="text-slate-900 text-sm font-black">
+                    {formatCurrency(Number(viewingMeasurement.total_measured_amount) || 0)}
+                  </strong>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-400 font-bold uppercase block">Retenção ({viewingMeasurement.retention_percent}%)</span>
+                  <strong className="text-amber-800 text-sm font-bold">
+                    {formatCurrency((Number(viewingMeasurement.total_measured_amount) * Number(viewingMeasurement.retention_percent)) / 100)}
+                  </strong>
+                </div>
+                <div>
+                  <span className="text-[10px] text-emerald-700 font-bold uppercase block">Valor Líquido da Fatura</span>
+                  <strong className="text-emerald-900 text-sm font-black">
+                    {formatCurrency(Number(viewingMeasurement.net_amount) || 0)}
+                  </strong>
+                </div>
               </div>
-              <div>
-                <span className="text-[10px] text-slate-400 font-bold uppercase block">Retenção ({viewingMeasurement.retention_percent}%)</span>
-                <strong className="text-amber-800 text-sm font-bold">
-                  {formatCurrency((Number(viewingMeasurement.total_measured_amount) * Number(viewingMeasurement.retention_percent)) / 100)}
-                </strong>
+            ) : (
+              <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200 text-xs text-slate-500 italic shrink-0">
+                Os valores monetários deste boletim são confidenciais e restritos à gestão financeira.
               </div>
-              <div>
-                <span className="text-[10px] text-emerald-700 font-bold uppercase block">Valor Líquido da Fatura</span>
-                <strong className="text-emerald-900 text-sm font-black">
-                  {formatCurrency(Number(viewingMeasurement.net_amount) || 0)}
-                </strong>
-              </div>
-            </div>
+            )}
 
             {viewingMeasurement.notes && (
               <div className="p-3 bg-amber-50/60 border border-amber-200/80 rounded-xl text-xs text-amber-900 shrink-0">
@@ -1392,9 +1459,9 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
                     <tr>
                       <th className="py-2.5 px-3">Subitem / Item / Item Raiz</th>
                       <th className="py-2.5 px-3">Unid</th>
-                      <th className="py-2.5 px-3">Preço Unit.</th>
+                      {canSeePrices && <th className="py-2.5 px-3">Preço Unit.</th>}
                       <th className="py-2.5 px-3 text-right">Apurado Período</th>
-                      <th className="py-2.5 px-3 text-right">Total Medido</th>
+                      {canSeePrices && <th className="py-2.5 px-3 text-right">Total Medido</th>}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 font-medium">
@@ -1417,11 +1484,13 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
                             </div>
                           </td>
                           <td className="py-2.5 px-3">{it.unit}</td>
-                          <td className="py-2.5 px-3">{formatCurrency(Number(it.unit_price) || 0)}</td>
+                          {canSeePrices && <td className="py-2.5 px-3">{formatCurrency(Number(it.unit_price) || 0)}</td>}
                           <td className="py-2.5 px-3 font-semibold text-sky-700 text-right">{it.quantity_measured_period}</td>
-                          <td className="py-2.5 px-3 font-bold text-slate-900 text-right">
-                            {formatCurrency(Number(it.measured_amount) || 0)}
-                          </td>
+                          {canSeePrices && (
+                            <td className="py-2.5 px-3 font-bold text-slate-900 text-right">
+                              {formatCurrency(Number(it.measured_amount) || 0)}
+                            </td>
+                          )}
                         </tr>
                       );
                     })}
@@ -1489,7 +1558,7 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
           onClose={() => setIsPrintModalOpen(false)}
           measurement={viewingMeasurement}
           workId={workId}
-          contractAmount={kpis.contractAmount}
+          contractAmount={canSeePrices ? kpis.contractAmount : 0}
         />
       )}
     </div>
