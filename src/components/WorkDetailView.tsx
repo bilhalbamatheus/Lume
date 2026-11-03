@@ -27,7 +27,6 @@ import {
   X,
   Check,
   Settings,
-  BookOpenCheck,
   LayoutDashboard,
   ChevronDown,
   FileText,
@@ -275,7 +274,6 @@ export const WorkDetailView: React.FC<WorkDetailViewProps> = ({
 
       if (error) throw error;
 
-      // Cálculo Dinâmico de Progresso para evitar valores zerados
       let calculatedProgress = data.progress_percent || 0;
       const { data: itemRecords } = await supabase
         .from('work_items')
@@ -742,7 +740,7 @@ export const WorkDetailView: React.FC<WorkDetailViewProps> = ({
         </div>
       </header>
 
-      {/* 4. BARRA DE NAVEGAÇÃO DAS ABAS (COM A ABA DIÁRIOS) */}
+      {/* 4. BARRA DE NAVEGAÇÃO DAS ABAS */}
       <div className="bg-white border-b border-slate-200/90 px-4 sm:px-6 shrink-0 overflow-x-auto no-scrollbar shadow-2xs">
         <div className="flex items-center gap-4 sm:gap-6 text-xs font-bold">
           
@@ -792,7 +790,6 @@ export const WorkDetailView: React.FC<WorkDetailViewProps> = ({
             </button>
           )}
 
-          {/* NOVA ABA: DIÁRIOS DE OBRA */}
           <button
             type="button"
             onClick={() => setActiveTab('daily_logs')}
@@ -821,7 +818,7 @@ export const WorkDetailView: React.FC<WorkDetailViewProps> = ({
       </div>
 
       {/* 5. CORPO COM O CONTEÚDO DAS ABAS EM LARGURA TOTAL */}
-      <main className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 bg-slate-50/70">
+      <main className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 pb-24 lg:pb-6 bg-slate-50/70">
         
         {activeTab === 'dados' && (
           <WorkGeneralDataTab
@@ -869,7 +866,6 @@ export const WorkDetailView: React.FC<WorkDetailViewProps> = ({
           />
         )}
 
-        {/* RENDERIZAÇÃO DA ABA DIÁRIOS */}
         {activeTab === 'daily_logs' && (
           <WorkDailyLogsTab 
             workId={work.id}
@@ -1152,21 +1148,6 @@ export const WorkDetailView: React.FC<WorkDetailViewProps> = ({
         currentMeasurementType={work.measurement_type}
         onUpdated={loadWorkData}
       />
-
-      {/* BOTÃO FLUTUANTE DIÁRIO DE OBRA GLOBAL */}
-      {permissions.canCompleteWorkTasks && (
-        <button
-          type="button"
-          onClick={() => setIsDailyLogModalOpen(true)}
-          className="fixed bottom-6 right-6 sm:bottom-8 sm:right-8 z-[90] flex items-center gap-2.5 px-4 py-3 sm:px-6 sm:py-4 bg-sky-600 hover:bg-sky-500 text-white rounded-full shadow-[0_10px_40px_rgba(2,132,199,0.4)] transition-all hover:-translate-y-1 hover:shadow-[0_15px_50px_rgba(2,132,199,0.5)] cursor-pointer font-bold group"
-          title="Lançar Diário de Obra"
-        >
-          <BookOpenCheck size={24} className="group-hover:scale-110 transition-transform" />
-          <span className="hidden sm:inline text-sm tracking-wide">
-            Diário de Obra
-          </span>
-        </button>
-      )}
 
       {/* MODAL GLOBAL DO DIÁRIO DE OBRA */}
       <DailyWorkLogModal

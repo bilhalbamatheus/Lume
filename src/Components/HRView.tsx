@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissions } from '../hooks/usePermissions';
-import { EmployeeDetailModal } from './EmployeeDetailModal';
+import { CreateEmployeeModal } from './CreateEmployeeModal';
+import { EmployeeDetailPage } from './EmployeeDetailPage';
 import {
-  Users,
   UserPlus,
   Search,
   Filter,
@@ -14,25 +14,20 @@ import {
   Edit2,
   MoreVertical,
   Key,
-  KeyRound,
   Loader2,
   Sun,
   UserMinus,
   RotateCcw,
   AlertOctagon,
   X,
-  Copy,
   Clock,
   ShieldBan,
-  Save,
-  CheckCircle2,
-  Check,
-  Trash2,
   DollarSign,
   TrendingUp,
   ShieldCheck,
-  Plus,
-  Lock
+  Lock,
+  CheckCircle2,
+  Briefcase
 } from 'lucide-react';
 
 export interface Department {
@@ -115,7 +110,19 @@ export interface EmployeeItem {
 
 interface HRViewProps {
   permissions?: any;
+  triggerCreateEmployee?: boolean;
+  onResetTrigger?: () => void;
 }
+
+const maskCPF = (val: string | null | undefined): string => {
+  if (!val) return '';
+  const digits = val.replace(/\D/g, '').slice(0, 11);
+  if (digits.length !== 11) return val;
+  return digits
+    .replace(/(\d{3})(\d)/, '$1.$2')
+    .replace(/(\d{3})(\d)/, '$1.$2')
+    .replace(/(\d{3})(\d{1,2})$/, '$1-$2');
+};
 
 const getInitials = (name: string) => {
   if (!name) return 'EX';
@@ -128,7 +135,11 @@ const formatCurrency = (val: number) => {
   return (val || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 };
 
-export const HRView: React.FC<HRViewProps> = ({ permissions: propPermissions }) => {
+export const HRView: React.FC<HRViewProps> = ({
+  permissions: propPermissions,
+  triggerCreateEmployee = false,
+  onResetTrigger
+}) => {
   const { user } = useAuth();
   const { permissions: hookPermissions, loading: loadingPerms } = usePermissions();
   const permissions = propPermissions || hookPermissions;
@@ -146,6 +157,10 @@ export const HRView: React.FC<HRViewProps> = ({ permissions: propPermissions }) 
   const [companyRoles, setCompanyRoles] = useState<CompanyRoleItem[]>([]);
   const [companyCltChargesRate, setCompanyCltChargesRate] = useState<number>(64.5);
 
+  const [selectedEmployee, setSelectedEmployee] = useState<EmployeeItem | null>(null);
+  const [isEmployeeModalOpen, setIsEmployeeModalOpen] = useState(false);
+  const [employeeToEdit, setEmployeeToEdit] = useState<EmployeeItem | null>(null);
+
   // Filtros
   const [searchTerm, setSearchTerm] = useState('');
   const [departmentFilter, setDepartmentFilter] = useState('all');
@@ -153,7 +168,8 @@ export const HRView: React.FC<HRViewProps> = ({ permissions: propPermissions }) 
   const [contractFilter, setContractFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
   const [accessFilter, setAccessFilter] = useState('all');
-  const [isFilterModalOpen, setIsFilterModalOpen] = useState(false);
+  const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const filterContainerRef = useRef<HTMLDivElement>(null);
 
   // Menu Dropdown flutuante
   const [dropdownMenu, setDropdownMenu] = useState<{
@@ -162,12 +178,7 @@ export const HRView: React.FC<HRViewProps> = ({ permissions: propPermissions }) 
     left: number;
   } | null>(null);
 
-  // Modais de Operação
-  const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
-  const [selectedEmployeeForModal, setSelectedEmployeeForModal] = useState<EmployeeItem | null>(null);
-  const [isNewEmployeeModal, setIsNewEmployeeModal] = useState(false);
-
-  // Modal: Conceder Acesso / Convidar
+  // Modal: Conceder Acesso
   const [accessModalEmp, setAccessModalEmp] = useState<EmployeeItem | null>(null);
   const [accessEmailInput, setAccessEmailInput] = useState('');
   const [accessRoleInput, setAccessRoleInput] = useState('');
@@ -176,15 +187,27 @@ export const HRView: React.FC<HRViewProps> = ({ permissions: propPermissions }) 
   const [copiedLinkToken, setCopiedLinkToken] = useState<string | null>(null);
   const [accessSuccessMessage, setAccessSuccessMessage] = useState<string | null>(null);
 
-  // Modal: Confirmação de Ações de Situação ou Revogação
+  // Modal: Confirmação de Ações
   const [actionConfirm, setActionConfirm] = useState<{
     type: 'ferias' | 'afastar' | 'reativar' | 'desligar' | 'remover_acesso';
     employee: EmployeeItem;
   } | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
 
+  // Gatilho de abertura via FAB Mobile do App.tsx
   useEffect(() => {
-    function handleScrollOrClickOutside() {
+    if (triggerCreateEmployee) {
+      setEmployeeToEdit(null);
+      setIsEmployeeModalOpen(true);
+      if (onResetTrigger) onResetTrigger();
+    }
+  }, [triggerCreateEmployee, onResetTrigger]);
+
+  useEffect(() => {
+    function handleScrollOrClickOutside(e: MouseEvent) {
+      if (filterContainerRef.current && !filterContainerRef.current.contains(e.target as Node)) {
+        setIsFilterOpen(false);
+      }
       setDropdownMenu(null);
     }
     window.addEventListener('click', handleScrollOrClickOutside);
@@ -380,10 +403,14 @@ export const HRView: React.FC<HRViewProps> = ({ permissions: propPermissions }) 
 
       setEmployees(list);
 
+      setSelectedEmployee(prev => {
+        if (!prev) return null;
+        return list.find(e => e.user_id === prev.user_id) || prev;
+      });
+
       setAccessModalEmp(prev => {
         if (!prev) return null;
-        const updated = list.find(e => e.user_id === prev.user_id);
-        return updated || prev;
+        return list.find(e => e.user_id === prev.user_id) || prev;
       });
     } catch (err) {
       console.error('Erro ao carregar colaboradores de RH:', err);
@@ -398,16 +425,19 @@ export const HRView: React.FC<HRViewProps> = ({ permissions: propPermissions }) 
     }
   }, [loadHRData, canViewModule]);
 
-  // Filtros aplicados na listagem
   const filteredEmployees = useMemo(() => {
+    const q = searchTerm.toLowerCase().trim();
+    const qDigits = searchTerm.replace(/\D/g, '');
+
     return employees.filter(e => {
-      const q = searchTerm.toLowerCase();
+      const empCpfDigits = (e.cpf || '').replace(/\D/g, '');
       const matchesSearch =
         q === '' ||
         e.full_name.toLowerCase().includes(q) ||
         (e.role_title && e.role_title.toLowerCase().includes(q)) ||
-        (e.cpf && e.cpf.includes(q)) ||
-        (e.email && e.email.toLowerCase().includes(q));
+        (e.email && e.email.toLowerCase().includes(q)) ||
+        (qDigits && empCpfDigits.includes(qDigits)) ||
+        (e.cpf && e.cpf.includes(q));
 
       const matchesDept = departmentFilter === 'all' || e.department_id === departmentFilter;
       const matchesJob = jobPositionFilter === 'all' || e.job_position_id === jobPositionFilter;
@@ -446,7 +476,6 @@ export const HRView: React.FC<HRViewProps> = ({ permissions: propPermissions }) 
     const total = list.length;
     const active = list.filter(e => e.work_status === 'ativo').length;
     const dismissed = list.filter(e => e.work_status === 'desligado').length;
-
     const activeMembers = list.filter(e => e.work_status !== 'desligado');
 
     let totalBaseSalary = 0;
@@ -454,9 +483,7 @@ export const HRView: React.FC<HRViewProps> = ({ permissions: propPermissions }) 
 
     activeMembers.forEach(e => {
       let base = Number(e.base_salary) || 0;
-      if (e.salary_type === 'diaria') {
-        base = base * 22;
-      }
+      if (e.salary_type === 'diaria') base = base * 22;
 
       const hazardPay = e.has_hazard_pay ? (base * (Number(e.hazard_pay_percent) || 30)) / 100 : 0;
       const totalColabBase = base + hazardPay;
@@ -503,7 +530,6 @@ export const HRView: React.FC<HRViewProps> = ({ permissions: propPermissions }) 
     if (emp.work_status === 'desligado' || !emp.certifications || emp.certifications.length === 0) {
       return null;
     }
-
     const nowStr = new Date().toISOString().split('T')[0];
     const in30Days = new Date();
     in30Days.setDate(new Date().getDate() + 30);
@@ -525,22 +551,20 @@ export const HRView: React.FC<HRViewProps> = ({ permissions: propPermissions }) 
 
   const handleOpenNewEmployee = () => {
     if (!canManageEmployees) return;
-    setSelectedEmployeeForModal(null);
-    setIsNewEmployeeModal(true);
-    setIsDetailModalOpen(true);
+    setEmployeeToEdit(null);
+    setIsEmployeeModalOpen(true);
   };
 
-  const handleOpenEmployeeDetail = (emp: EmployeeItem) => {
-    setSelectedEmployeeForModal(emp);
-    setIsNewEmployeeModal(false);
-    setIsDetailModalOpen(true);
+  const handleOpenEditEmployee = (emp: EmployeeItem) => {
+    setEmployeeToEdit(emp);
+    setIsEmployeeModalOpen(true);
   };
 
   const handleOpenDropdown = (e: React.MouseEvent<HTMLButtonElement>, emp: EmployeeItem) => {
     e.stopPropagation();
     const rect = e.currentTarget.getBoundingClientRect();
     const menuWidth = 208;
-    const menuHeight = 220;
+    const menuHeight = 230;
 
     let left = rect.right - menuWidth;
     let top = rect.bottom + 6;
@@ -715,24 +739,14 @@ export const HRView: React.FC<HRViewProps> = ({ permissions: propPermissions }) 
       const targetEmail = accessModalEmp.email ? accessModalEmp.email.toLowerCase().trim() : '';
 
       if (accessModalEmp.invite_id) {
-        await supabase
-          .from('company_invites')
-          .delete()
-          .eq('id', accessModalEmp.invite_id);
+        await supabase.from('company_invites').delete().eq('id', accessModalEmp.invite_id);
       } else if (targetEmail) {
-        await supabase
-          .from('company_invites')
-          .delete()
-          .eq('company_id', companyId)
-          .eq('email', targetEmail);
+        await supabase.from('company_invites').delete().eq('company_id', companyId).eq('email', targetEmail);
       }
 
       await supabase
         .from('employee_records')
-        .update({
-          has_system_access: false,
-          updated_at: new Date().toISOString()
-        })
+        .update({ has_system_access: false, updated_at: new Date().toISOString() })
         .eq('user_id', accessModalEmp.user_id)
         .eq('company_id', companyId);
 
@@ -776,31 +790,11 @@ export const HRView: React.FC<HRViewProps> = ({ permissions: propPermissions }) 
 
       if (type === 'remover_acesso') {
         if (!canManageEmployees) return;
-        const { data: rec } = await supabase
+        await supabase
           .from('employee_records')
-          .select('id')
+          .update({ has_system_access: false, updated_at: new Date().toISOString() })
           .eq('user_id', employee.user_id)
-          .eq('company_id', companyId)
-          .maybeSingle();
-
-        if (rec) {
-          await supabase
-            .from('employee_records')
-            .update({
-              has_system_access: false,
-              updated_at: new Date().toISOString()
-            })
-            .eq('id', rec.id);
-        } else {
-          await supabase
-            .from('employee_records')
-            .insert({
-              company_id: companyId,
-              user_id: employee.user_id,
-              has_system_access: false,
-              work_status: 'ativo'
-            });
-        }
+          .eq('company_id', companyId);
 
         await supabase
           .from('memberships')
@@ -809,10 +803,7 @@ export const HRView: React.FC<HRViewProps> = ({ permissions: propPermissions }) 
           .eq('company_id', companyId);
 
         if (employee.invite_id) {
-          await supabase
-            .from('company_invites')
-            .delete()
-            .eq('id', employee.invite_id);
+          await supabase.from('company_invites').delete().eq('id', employee.invite_id);
         }
       } else {
         if (!canManageAdmissions) return;
@@ -826,35 +817,16 @@ export const HRView: React.FC<HRViewProps> = ({ permissions: propPermissions }) 
           resignationDate = new Date().toISOString().split('T')[0];
         }
 
-        const { data: existingRec } = await supabase
+        await supabase
           .from('employee_records')
-          .select('id')
+          .update({
+            work_status: newStatus,
+            has_system_access: type === 'desligar' ? false : employee.has_system_access,
+            resignation_date: resignationDate,
+            updated_at: new Date().toISOString()
+          })
           .eq('user_id', employee.user_id)
-          .eq('company_id', companyId)
-          .maybeSingle();
-
-        if (existingRec) {
-          await supabase
-            .from('employee_records')
-            .update({
-              work_status: newStatus,
-              has_system_access: type === 'desligar' ? false : employee.has_system_access,
-              resignation_date: resignationDate,
-              updated_at: new Date().toISOString()
-            })
-            .eq('id', existingRec.id);
-        } else {
-          await supabase
-            .from('employee_records')
-            .insert({
-              company_id: companyId,
-              user_id: employee.user_id,
-              work_status: newStatus,
-              has_system_access: type === 'desligar' ? false : employee.has_system_access,
-              resignation_date: resignationDate,
-              updated_at: new Date().toISOString()
-            });
-        }
+          .eq('company_id', companyId);
 
         if (type === 'desligar') {
           await supabase
@@ -867,14 +839,6 @@ export const HRView: React.FC<HRViewProps> = ({ permissions: propPermissions }) 
             .from('profiles')
             .update({ is_active: false })
             .eq('id', employee.user_id);
-
-          if (employee.email) {
-            await supabase
-              .from('company_invites')
-              .delete()
-              .eq('company_id', companyId)
-              .eq('email', employee.email.toLowerCase().trim());
-          }
         }
 
         if (type === 'reativar') {
@@ -882,14 +846,6 @@ export const HRView: React.FC<HRViewProps> = ({ permissions: propPermissions }) 
             .from('profiles')
             .update({ is_active: true })
             .eq('id', employee.user_id);
-
-          if (employee.has_system_access) {
-            await supabase
-              .from('memberships')
-              .update({ status: 'ativo' })
-              .eq('profile_id', employee.user_id)
-              .eq('company_id', companyId);
-          }
         }
       }
 
@@ -902,7 +858,72 @@ export const HRView: React.FC<HRViewProps> = ({ permissions: propPermissions }) 
     }
   };
 
-  // Trava de tela se não tiver acesso ao módulo
+  const renderFilterFields = () => (
+    <>
+      <div>
+        <label className="block font-semibold text-slate-700 mb-1">Setor / Departamento</label>
+        <select
+          value={departmentFilter}
+          onChange={e => {
+            setDepartmentFilter(e.target.value);
+            setJobPositionFilter('all');
+          }}
+          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium focus:ring-2 focus:ring-sky-500 cursor-pointer text-xs"
+        >
+          <option value="all">Todos os Setores</option>
+          {departments.map(d => (
+            <option key={d.id} value={d.id}>{d.name}</option>
+          ))}
+        </select>
+      </div>
+
+      <div>
+        <label className="block font-semibold text-slate-700 mb-1">Cargo / Função</label>
+        <select
+          value={jobPositionFilter}
+          onChange={e => setJobPositionFilter(e.target.value)}
+          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium focus:ring-2 focus:ring-sky-500 cursor-pointer text-xs"
+        >
+          <option value="all">Todos os Cargos</option>
+          {jobPositions
+            .filter(j => departmentFilter === 'all' || j.department_id === departmentFilter)
+            .map(j => (
+              <option key={j.id} value={j.id}>{j.title}</option>
+            ))}
+        </select>
+      </div>
+
+      <div>
+        <label className="block font-semibold text-slate-700 mb-1">Situação Cadastral</label>
+        <select
+          value={statusFilter}
+          onChange={e => setStatusFilter(e.target.value)}
+          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium focus:ring-2 focus:ring-sky-500 cursor-pointer text-xs"
+        >
+          <option value="all">Todas as Situações</option>
+          <option value="ativo">Ativos</option>
+          <option value="ferias">Em Férias</option>
+          <option value="afastado">Afastados</option>
+          <option value="desligado">Desligados</option>
+        </select>
+      </div>
+
+      <div>
+        <label className="block font-semibold text-slate-700 mb-1">Nível de Acesso</label>
+        <select
+          value={accessFilter}
+          onChange={e => setAccessFilter(e.target.value)}
+          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium focus:ring-2 focus:ring-sky-500 cursor-pointer text-xs"
+        >
+          <option value="all">Todos os Acessos</option>
+          <option value="com_login">Com Login</option>
+          <option value="pendente">Convite Pendente</option>
+          <option value="apenas_campo">Apenas Campo</option>
+        </select>
+      </div>
+    </>
+  );
+
   if (!loadingPerms && !canViewModule) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-slate-50/50">
@@ -917,17 +938,154 @@ export const HRView: React.FC<HRViewProps> = ({ permissions: propPermissions }) 
     );
   }
 
+  // Visualização de Detalhes em Tela Cheia
+  if (selectedEmployee) {
+    return (
+      <>
+        <EmployeeDetailPage
+          employee={selectedEmployee}
+          departments={departments}
+          jobPositions={jobPositions}
+          onBack={() => setSelectedEmployee(null)}
+          onEdit={() => handleOpenEditEmployee(selectedEmployee)}
+          onOpenAccessModal={() => handleOpenAccessModal(selectedEmployee)}
+          onReload={loadHRData}
+        />
+
+        {/* Modal de Edição */}
+        {isEmployeeModalOpen && (
+          <CreateEmployeeModal
+            isOpen={isEmployeeModalOpen}
+            onClose={() => {
+              setIsEmployeeModalOpen(false);
+              setEmployeeToEdit(null);
+            }}
+            departments={departments}
+            jobPositions={jobPositions}
+            employeeToEdit={employeeToEdit}
+            onSuccess={loadHRData}
+          />
+        )}
+
+        {/* POPUP DE ACESSO */}
+        {accessModalEmp && createPortal(
+          <div className="fixed inset-0 z-[500] flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-xs animate-in fade-in duration-150">
+            <div className="bg-white border border-slate-200 rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-4 animate-in zoom-in-95 duration-150">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center border border-sky-100">
+                    <Key size={18} />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-slate-900 text-sm">Acesso ao Sistema Lume</h4>
+                    <p className="text-[11px] text-slate-400">{accessModalEmp.full_name}</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAccessModalEmp(null)}
+                  className="text-slate-400 hover:text-slate-600 p-1 rounded-lg cursor-pointer"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              {accessSuccessMessage && (
+                <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-start gap-2.5 text-xs text-emerald-900">
+                  <CheckCircle2 size={16} className="text-emerald-600 shrink-0 mt-0.5" />
+                  <span>{accessSuccessMessage}</span>
+                </div>
+              )}
+
+              <form onSubmit={handleSaveAccessSubmit} className="space-y-3.5 text-xs">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">E-mail Corporativo *</label>
+                  <input
+                    type="email"
+                    required
+                    placeholder="colaborador@empresa.com.br"
+                    value={accessEmailInput}
+                    onChange={e => setAccessEmailInput(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-medium focus:ring-2 focus:ring-sky-500 text-slate-900"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Perfil de Permissões *</label>
+                  <select
+                    required
+                    value={accessRoleInput}
+                    onChange={e => setAccessRoleInput(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-semibold cursor-pointer text-slate-900"
+                  >
+                    <option value="">Selecione o nível...</option>
+                    {companyRoles.map(r => (
+                      <option key={r.id} value={r.id}>{r.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {accessModalEmp.invite_token && (
+                  <div className="p-3.5 bg-sky-50/70 border border-sky-200 rounded-2xl space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-sky-950 flex items-center gap-1">
+                        <Clock size={12} className="text-sky-600" />
+                        <span>Link de Convite Ativo</span>
+                      </span>
+                      <button
+                        type="button"
+                        disabled={cancelingInvite}
+                        onClick={handleCancelInviteFromModal}
+                        className="px-2.5 py-1 bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 rounded-xl text-xs font-bold"
+                      >
+                        {cancelingInvite ? 'Cancelando...' : 'Cancelar Convite'}
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        readOnly
+                        value={`${window.location.origin}/invite?token=${accessModalEmp.invite_token}`}
+                        className="flex-1 px-2.5 py-1.5 bg-white border border-sky-200 rounded-xl font-mono text-[11px]"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleCopyInviteLink(accessModalEmp.invite_token)}
+                        className="px-3.5 py-1.5 bg-sky-600 text-white rounded-xl font-bold text-xs"
+                      >
+                        {copiedLinkToken === accessModalEmp.invite_token ? 'Copiado!' : 'Copiar'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                  <button type="button" onClick={() => setAccessModalEmp(null)} className="px-3.5 py-1.5 text-slate-600 rounded-xl font-semibold">
+                    Fechar
+                  </button>
+                  <button type="submit" disabled={savingAccess || !accessEmailInput.trim()} className="px-4 py-1.5 bg-sky-600 text-white rounded-xl font-bold">
+                    {savingAccess ? 'Salvando...' : 'Salvar e Conceder'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>,
+          document.body
+        )}
+      </>
+    );
+  }
+
   return (
     <div className="flex-1 flex flex-col h-full min-w-0 bg-slate-50/50 p-3 sm:p-6 overflow-y-auto space-y-3.5 relative">
       
       {/* 1. CABEÇALHO */}
       <div className="flex items-center justify-between gap-3 shrink-0">
         <div>
-          <h1 className="text-lg sm:text-xl font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
-            <Users size={22} className="text-sky-600" />
-            <span>Gestão de Pessoas & RH</span>
+          <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
+            Gestão de Pessoas
           </h1>
-          <p className="hidden sm:block text-xs text-slate-500 mt-0.5">
+          <p className="hidden sm:block text-xs sm:text-sm text-slate-500 mt-0.5">
             Dossiê completo, alocação funcional, controle de acesso e situação de colaboradores.
           </p>
         </div>
@@ -944,25 +1102,19 @@ export const HRView: React.FC<HRViewProps> = ({ permissions: propPermissions }) 
         )}
       </div>
 
-      {/* 2. CARDS DE INDICADORES DINÂMICOS */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3">
-        {/* CARD 1: QUADRO FILTRADO */}
+      {/* 2. CARDS DE INDICADORES (OCULTOS NO MOBILE, VISÍVEIS APENAS NO DESKTOP) */}
+      <div className="hidden md:grid md:grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3">
         <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-2xs space-y-1">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-            Quadro Efetivo
-          </span>
+          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Quadro Efetivo</span>
           <div className="flex items-baseline gap-1.5">
             <strong className="text-base sm:text-lg font-black text-slate-900">{dynamicMetrics.total}</strong>
-            <span className="text-[11px] sm:text-xs font-semibold text-emerald-600">
-              ({dynamicMetrics.active} ativos)
-            </span>
+            <span className="text-[11px] sm:text-xs font-semibold text-emerald-600">({dynamicMetrics.active} ativos)</span>
           </div>
           <span className="text-[10px] text-slate-400 block truncate">
             {dynamicMetrics.dismissed > 0 ? `${dynamicMetrics.dismissed} desligado(s)` : 'Sem desligamentos'}
           </span>
         </div>
 
-        {/* CARD 2: FOLHA SALARIAL BASE */}
         <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-2xs space-y-1">
           <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block flex items-center gap-1">
             <DollarSign size={12} className="text-sky-600" />
@@ -976,7 +1128,6 @@ export const HRView: React.FC<HRViewProps> = ({ permissions: propPermissions }) 
           </span>
         </div>
 
-        {/* CARD 3: CUSTO TOTAL EMPRESA */}
         <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-2xs space-y-1">
           <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block flex items-center gap-1">
             <TrendingUp size={12} className="text-indigo-600" />
@@ -990,7 +1141,6 @@ export const HRView: React.FC<HRViewProps> = ({ permissions: propPermissions }) 
           </span>
         </div>
 
-        {/* CARD 4: CONFORMIDADE SST & NRs */}
         <div className={`p-3 rounded-2xl border shadow-2xs space-y-1 transition-colors ${
           dynamicMetrics.expiredCertsCount > 0
             ? 'bg-rose-50/70 border-rose-200 text-rose-900'
@@ -1008,14 +1158,9 @@ export const HRView: React.FC<HRViewProps> = ({ permissions: propPermissions }) 
             )}
             <span>Saúde & NRs</span>
           </span>
-
           <div className="flex items-baseline gap-2">
             <strong className={`text-base sm:text-lg font-black ${
-              dynamicMetrics.expiredCertsCount > 0
-                ? 'text-rose-700'
-                : dynamicMetrics.expiringSoonCertsCount > 0
-                ? 'text-amber-700'
-                : 'text-emerald-700'
+              dynamicMetrics.expiredCertsCount > 0 ? 'text-rose-700' : dynamicMetrics.expiringSoonCertsCount > 0 ? 'text-amber-700' : 'text-emerald-700'
             }`}>
               {dynamicMetrics.expiredCertsCount > 0
                 ? `${dynamicMetrics.expiredCertsCount} vencida(s)`
@@ -1024,21 +1169,16 @@ export const HRView: React.FC<HRViewProps> = ({ permissions: propPermissions }) 
                 : '100% em dia'}
             </strong>
           </div>
-
           <span className="text-[10px] block opacity-75 truncate">
             {dynamicMetrics.expiringSoonCertsCount > 0 && dynamicMetrics.expiredCertsCount > 0
               ? `+${dynamicMetrics.expiringSoonCertsCount} vencendo em 30d`
-              : dynamicMetrics.expiredCertsCount === 0 && dynamicMetrics.expiringSoonCertsCount === 0
-              ? 'Todos cursos válidos'
-              : 'Atenção ao canteiro'}
+              : 'Conformidade operacional'}
           </span>
         </div>
       </div>
 
-      {/* 3. BARRA DE FILTROS & BUSCA: Barra de pesquisa | Botão de filtros (só ícone) no mobile */}
+      {/* 3. BARRA DE PESQUISA & BOTÃO DE FILTROS UNIFICADO */}
       <div className="bg-white p-2.5 sm:p-3 rounded-2xl border border-slate-200 shadow-2xs flex items-center justify-between gap-2.5 shrink-0">
-        
-        {/* Barra de pesquisa */}
         <div className="relative flex-1 min-w-0">
           <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
@@ -1050,97 +1190,194 @@ export const HRView: React.FC<HRViewProps> = ({ permissions: propPermissions }) 
           />
         </div>
 
-        {/* Desktop: Selects em linha */}
-        <div className="hidden lg:flex items-center gap-2">
-          <select
-            value={departmentFilter}
-            onChange={e => {
-              setDepartmentFilter(e.target.value);
-              setJobPositionFilter('all');
-            }}
-            className="px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 cursor-pointer"
+        {/* Botão de Filtros Unificado */}
+        <div className="relative shrink-0" ref={filterContainerRef}>
+          <button
+            type="button"
+            onClick={() => setIsFilterOpen(!isFilterOpen)}
+            className={`inline-flex items-center justify-center gap-1.5 px-3 py-2 border rounded-xl text-xs font-semibold transition cursor-pointer shrink-0 ${
+              activeFiltersCount > 0
+                ? 'bg-sky-50 border-sky-200 text-sky-700 hover:bg-sky-100'
+                : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+            }`}
+            title="Filtros avançados"
           >
-            <option value="all">Todos os Setores</option>
-            {departments.map(d => (
-              <option key={d.id} value={d.id}>{d.name}</option>
-            ))}
-          </select>
+            <Filter size={14} className={activeFiltersCount > 0 ? 'text-sky-600' : 'text-slate-400'} />
+            <span>Filtros</span>
+            {activeFiltersCount > 0 && (
+              <span className="h-4 w-4 rounded-full bg-sky-600 text-white text-[10px] flex items-center justify-center font-bold">
+                {activeFiltersCount}
+              </span>
+            )}
+          </button>
 
-          <select
-            value={jobPositionFilter}
-            onChange={e => setJobPositionFilter(e.target.value)}
-            className="px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 cursor-pointer"
-          >
-            <option value="all">Todos os Cargos</option>
-            {jobPositions
-              .filter(j => departmentFilter === 'all' || j.department_id === departmentFilter)
-              .map(j => (
-                <option key={j.id} value={j.id}>{j.title}</option>
-              ))}
-          </select>
+          {/* POPOVER DESKTOP */}
+          {isFilterOpen && (
+            <div className="hidden md:block absolute right-0 top-full mt-2 w-72 bg-white border border-slate-200 rounded-2xl shadow-xl p-4 z-50 animate-in fade-in zoom-in-95 duration-100 space-y-3 text-xs text-left">
+              <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                <span className="font-bold text-slate-900 uppercase tracking-wider text-[11px]">Filtros de RH</span>
+                <div className="flex items-center gap-2">
+                  {activeFiltersCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={clearFilters}
+                      className="text-[11px] text-sky-600 hover:underline font-semibold cursor-pointer"
+                    >
+                      Limpar
+                    </button>
+                  )}
+                  <button onClick={() => setIsFilterOpen(false)} className="p-1 text-slate-400 hover:text-slate-600">
+                    <X size={15} />
+                  </button>
+                </div>
+              </div>
 
-          <select
-            value={statusFilter}
-            onChange={e => setStatusFilter(e.target.value)}
-            className="px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 cursor-pointer"
-          >
-            <option value="all">Todas as Situações</option>
-            <option value="ativo">Ativos</option>
-            <option value="ferias">Em Férias</option>
-            <option value="afastado">Afastados</option>
-            <option value="desligado">Desligados</option>
-          </select>
+              {renderFilterFields()}
 
-          <select
-            value={accessFilter}
-            onChange={e => setAccessFilter(e.target.value)}
-            className="px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 cursor-pointer"
-          >
-            <option value="all">Todos os Acessos</option>
-            <option value="com_login">Com Login</option>
-            <option value="pendente">Convite Pendente</option>
-            <option value="apenas_campo">Apenas Campo</option>
-          </select>
-
-          <select
-            value={contractFilter}
-            onChange={e => setContractFilter(e.target.value)}
-            className="px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 cursor-pointer"
-          >
-            <option value="all">Todos os Vínculos</option>
-            <option value="clt">CLT</option>
-            <option value="pj">PJ</option>
-            <option value="diarista">Diarista</option>
-            <option value="estagio">Estágio</option>
-          </select>
-        </div>
-
-        {/* Botão de Filtros (Abre o Bottom Sheet no Mobile) */}
-        <button
-          type="button"
-          onClick={() => setIsFilterModalOpen(true)}
-          className={`inline-flex lg:hidden items-center justify-center p-2 border rounded-xl text-xs font-semibold transition cursor-pointer shrink-0 ${
-            activeFiltersCount > 0
-              ? 'bg-sky-50 border-sky-200 text-sky-700'
-              : 'bg-white border-slate-200 text-slate-600'
-          }`}
-          title="Filtros"
-        >
-          <Filter size={16} className={activeFiltersCount > 0 ? 'text-sky-600' : 'text-slate-500'} />
-          {activeFiltersCount > 0 && (
-            <span className="ml-1 w-4 h-4 rounded-full bg-sky-600 text-white text-[10px] font-bold flex items-center justify-center">
-              {activeFiltersCount}
-            </span>
+              <button
+                type="button"
+                onClick={() => setIsFilterOpen(false)}
+                className="w-full py-2 bg-slate-900 text-white rounded-xl text-xs font-semibold cursor-pointer"
+              >
+                Fechar
+              </button>
+            </div>
           )}
-        </button>
-
-        <span className="hidden sm:inline text-xs font-bold text-slate-500 shrink-0">
-          {filteredEmployees.length} {filteredEmployees.length === 1 ? 'colaborador' : 'colaboradores'}
-        </span>
+        </div>
       </div>
 
-      {/* 4. LISTAGEM PRINCIPAL */}
-      <div className="bg-white border border-slate-200 rounded-2xl shadow-2xs overflow-hidden flex-1 min-h-0">
+      {/* ACTION SHEET MOBILE (FILTROS) */}
+      {isFilterOpen && (
+        <div className="md:hidden fixed inset-0 z-[150] flex flex-col justify-end bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="absolute inset-0" onClick={() => setIsFilterOpen(false)} />
+          <div className="relative bg-white rounded-t-3xl p-5 space-y-3.5 animate-in slide-in-from-bottom duration-200 max-h-[85vh] overflow-y-auto border-t border-slate-200 text-xs">
+            <div className="w-12 h-1.5 bg-slate-200 rounded-full mx-auto mb-1" />
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+              <span className="font-bold text-slate-900 text-sm">Filtros de RH</span>
+              <div className="flex items-center gap-2">
+                {activeFiltersCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={clearFilters}
+                    className="text-xs text-sky-600 hover:underline font-semibold cursor-pointer"
+                  >
+                    Limpar
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setIsFilterOpen(false)}
+                  className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+
+            {renderFilterFields()}
+
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={() => setIsFilterOpen(false)}
+                className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-semibold cursor-pointer shadow-xs transition"
+              >
+                Aplicar Filtros
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 4. FEED DE CARDS NO MOBILE (< md) */}
+      <div className="block md:hidden flex-1 min-h-0 overflow-y-auto no-scrollbar space-y-2.5 pb-24">
+        {loading ? (
+          <div className="p-10 text-center bg-white rounded-2xl border border-slate-200 shadow-2xs text-slate-400 text-xs">
+            <Loader2 size={20} className="animate-spin text-sky-600 mx-auto mb-2" />
+            Carregando colaboradores...
+          </div>
+        ) : filteredEmployees.length === 0 ? (
+          <div className="p-8 text-center bg-white rounded-2xl border border-slate-200 shadow-2xs text-slate-400 text-xs italic">
+            Nenhum colaborador encontrado com os filtros selecionados.
+          </div>
+        ) : (
+          filteredEmployees.map(emp => {
+            const certStatus = getEmployeeCertificationStatus(emp);
+            const isInvited = Boolean(emp.invite_token && emp.invite_status === 'pending');
+
+            return (
+              <div
+                key={emp.user_id}
+                onClick={() => setSelectedEmployee(emp)}
+                className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-2xs active:bg-slate-50 transition cursor-pointer space-y-2.5"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="relative shrink-0">
+                      <div className="w-10 h-10 rounded-xl bg-sky-100 text-sky-800 font-bold text-xs flex items-center justify-center overflow-hidden border border-sky-200">
+                        {emp.avatar_url ? (
+                          <img src={emp.avatar_url} alt="" className="w-full h-full object-cover" />
+                        ) : getInitials(emp.full_name)}
+                      </div>
+                      {certStatus === 'expired' && (
+                        <span className="absolute -top-1 -right-1 w-3 h-3 bg-rose-600 rounded-full border-2 border-white animate-pulse" />
+                      )}
+                    </div>
+
+                    <div className="min-w-0">
+                      <strong className="text-slate-900 font-bold truncate text-sm block">
+                        {emp.full_name}
+                      </strong>
+                      <span className="block text-[11px] text-slate-400 truncate">
+                        {emp.job_position_title || emp.role_title} • {emp.department_name || 'Sem Setor'}
+                      </span>
+                    </div>
+                  </div>
+
+                  <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold capitalize shrink-0 ${
+                    emp.work_status === 'ativo'
+                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                      : emp.work_status === 'desligado'
+                      ? 'bg-rose-50 text-rose-700 border-rose-200'
+                      : 'bg-amber-50 text-amber-700 border-amber-200'
+                  }`}>
+                    {emp.work_status}
+                  </span>
+                </div>
+
+                <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
+                  <div>
+                    {emp.has_system_access ? (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-bold text-sky-700 bg-sky-50 border border-sky-200 px-2 py-0.5 rounded-md">
+                        <Key size={10} />
+                        <span>{emp.access_role_name || 'Com Login'}</span>
+                      </span>
+                    ) : isInvited ? (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md">
+                        <Clock size={10} />
+                        <span>Convite Pendente</span>
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-medium text-slate-400 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200/80">
+                        <span>Apenas Campo</span>
+                      </span>
+                    )}
+                  </div>
+
+                  {canSeeSalaries && emp.base_salary > 0 && (
+                    <strong className="text-slate-900 font-bold font-mono">
+                      {formatCurrency(emp.base_salary)}
+                    </strong>
+                  )}
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {/* 5. TABELA NO DESKTOP (md: em diante) */}
+      <div className="hidden md:block bg-white border border-slate-200 rounded-2xl shadow-2xs overflow-hidden flex-1 min-h-0">
         {loading ? (
           <div className="p-16 text-center text-xs text-slate-400">
             <Loader2 size={20} className="animate-spin mx-auto mb-2 text-sky-600" />
@@ -1172,10 +1409,9 @@ export const HRView: React.FC<HRViewProps> = ({ permissions: propPermissions }) 
                   return (
                     <tr
                       key={emp.user_id}
-                      onClick={() => handleOpenEmployeeDetail(emp)}
+                      onClick={() => setSelectedEmployee(emp)}
                       className="hover:bg-slate-50/80 transition cursor-pointer"
                     >
-                      {/* Colaborador */}
                       <td className="py-3 px-4">
                         <div className="flex items-center gap-2.5">
                           <div className="relative shrink-0">
@@ -1185,63 +1421,33 @@ export const HRView: React.FC<HRViewProps> = ({ permissions: propPermissions }) 
                               ) : getInitials(emp.full_name)}
                             </div>
                             {certStatus === 'expired' && (
-                              <span 
-                                className="absolute -top-1 -right-1 w-3 h-3 bg-rose-600 rounded-full border-2 border-white animate-pulse" 
-                                title="Certificação ou NR Vencida!"
-                              />
-                            )}
-                            {certStatus === 'expiring_soon' && (
-                              <span 
-                                className="absolute -top-1 -right-1 w-3 h-3 bg-amber-500 rounded-full border-2 border-white" 
-                                title="Certificação ou NR vencendo nos próximos 30 dias!"
-                              />
+                              <span className="absolute -top-1 -right-1 w-3 h-3 bg-rose-600 rounded-full border-2 border-white animate-pulse" />
                             )}
                           </div>
 
                           <div className="min-w-0">
-                            <div className="flex items-center gap-1.5">
-                              <strong className="text-slate-900 font-bold truncate text-xs">
-                                {emp.full_name}
-                              </strong>
-
-                              {certStatus === 'expired' && (
-                                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[9px] font-extrabold bg-rose-50 text-rose-700 border border-rose-200 shrink-0">
-                                  <AlertTriangle size={9} />
-                                  <span>NR Vencida</span>
-                                </span>
-                              )}
-                              {certStatus === 'expiring_soon' && (
-                                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[9px] font-extrabold bg-amber-50 text-amber-700 border border-amber-200 shrink-0">
-                                  <ShieldAlert size={9} />
-                                  <span>NR Vencendo</span>
-                                </span>
-                              )}
-                            </div>
+                            <strong className="text-slate-900 font-bold truncate text-xs block">
+                              {emp.full_name}
+                            </strong>
                             <span className="block text-[10px] text-slate-400 truncate">
-                              {emp.email || emp.cpf || 'Sem documento'}
+                              {emp.email || maskCPF(emp.cpf) || 'Sem documento'}
                             </span>
                           </div>
                         </div>
                       </td>
 
-                      {/* Cargo */}
                       <td className="py-3 px-4">
                         <strong className="block text-slate-800 font-bold truncate">{emp.job_position_title || emp.role_title}</strong>
                         <span className="text-[10px] uppercase font-bold text-slate-400">{emp.contract_type}</span>
                       </td>
 
-                      {/* Setor */}
                       <td className="py-3 px-4">
                         <span className="text-slate-700 font-semibold">{emp.department_name || 'Sem Setor'}</span>
                       </td>
 
-                      {/* Acesso ao App */}
                       <td className="py-3 px-4 text-center">
                         {emp.has_system_access ? (
-                          <span
-                            className="inline-flex items-center gap-1 text-[10px] font-bold text-sky-700 bg-sky-50 border border-sky-200 px-2 py-0.5 rounded-md"
-                            title={`Nível: ${emp.access_role_name || 'Ativo'}`}
-                          >
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-sky-700 bg-sky-50 border border-sky-200 px-2 py-0.5 rounded-md">
                             <Key size={10} />
                             <span>{emp.access_role_name || 'Com Login'}</span>
                           </span>
@@ -1257,36 +1463,26 @@ export const HRView: React.FC<HRViewProps> = ({ permissions: propPermissions }) 
                         )}
                       </td>
 
-                      {/* Remuneração */}
                       {canSeeSalaries && (
                         <td className="py-3 px-4">
                           <strong className="text-slate-900 font-bold block">
                             {emp.base_salary > 0 ? formatCurrency(emp.base_salary) : '—'}
                           </strong>
-                          {emp.base_salary > 0 && (
-                            <span className="text-[9px] text-slate-400 capitalize">
-                              {emp.salary_type} {emp.has_hazard_pay ? `• +${emp.hazard_pay_percent}% peric.` : ''}
-                            </span>
-                          )}
                         </td>
                       )}
 
-                      {/* Situação Funcional */}
                       <td className="py-3 px-4">
                         <span className={`inline-block px-2.5 py-0.5 rounded-md text-[10px] font-bold capitalize ${
                           emp.work_status === 'ativo'
                             ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                            : emp.work_status === 'ferias'
-                            ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                            : emp.work_status === 'afastado'
-                            ? 'bg-purple-50 text-purple-700 border border-purple-200'
-                            : 'bg-rose-50 text-rose-700 border border-rose-200'
+                            : emp.work_status === 'desligado'
+                            ? 'bg-rose-50 text-rose-700 border-rose-200'
+                            : 'bg-amber-50 text-amber-700 border-amber-200'
                         }`}>
                           {emp.work_status}
                         </span>
                       </td>
 
-                      {/* Ações */}
                       <td className="py-3 px-4 text-right">
                         <button
                           type="button"
@@ -1305,138 +1501,7 @@ export const HRView: React.FC<HRViewProps> = ({ permissions: propPermissions }) 
         )}
       </div>
 
-      {/* 5. BOTÃO FLUTUANTE (FAB) MOBILE */}
-      {canManageEmployees && (
-        <button
-          type="button"
-          onClick={handleOpenNewEmployee}
-          className="md:hidden fixed bottom-6 right-6 z-40 w-14 h-14 bg-sky-600 hover:bg-sky-500 active:scale-95 text-white rounded-full shadow-2xl flex items-center justify-center cursor-pointer transition-all border border-sky-400/40"
-          title="Cadastrar Colaborador"
-        >
-          <Plus size={26} strokeWidth={2.5} />
-        </button>
-      )}
-
-      {/* BOTTOM SHEET DE FILTROS MOBILE */}
-      {isFilterModalOpen && (
-        <div className="lg:hidden fixed inset-0 z-[150] flex flex-col justify-end bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-150">
-          <div className="absolute inset-0" onClick={() => setIsFilterModalOpen(false)} />
-          <div className="relative bg-white rounded-t-3xl p-5 space-y-3.5 animate-in slide-in-from-bottom duration-200 max-h-[85vh] overflow-y-auto border-t border-slate-200 text-xs">
-            <div className="w-12 h-1.5 bg-slate-200 rounded-full mx-auto mb-1" />
-            
-            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-              <span className="font-bold text-slate-900 text-sm">Filtros de Colaboradores</span>
-              <div className="flex items-center gap-2">
-                {activeFiltersCount > 0 && (
-                  <button
-                    type="button"
-                    onClick={clearFilters}
-                    className="text-xs text-sky-600 hover:underline font-semibold cursor-pointer"
-                  >
-                    Limpar
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => setIsFilterModalOpen(false)}
-                  className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
-                >
-                  <X size={18} />
-                </button>
-              </div>
-            </div>
-
-            <div>
-              <label className="block font-semibold text-slate-700 mb-1">Setor</label>
-              <select
-                value={departmentFilter}
-                onChange={e => {
-                  setDepartmentFilter(e.target.value);
-                  setJobPositionFilter('all');
-                }}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium"
-              >
-                <option value="all">Todos os Setores</option>
-                {departments.map(d => (
-                  <option key={d.id} value={d.id}>{d.name}</option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block font-semibold text-slate-700 mb-1">Cargo</label>
-              <select
-                value={jobPositionFilter}
-                onChange={e => setJobPositionFilter(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium"
-              >
-                <option value="all">Todos os Cargos</option>
-                {jobPositions
-                  .filter(j => departmentFilter === 'all' || j.department_id === departmentFilter)
-                  .map(j => (
-                    <option key={j.id} value={j.id}>{j.title}</option>
-                  ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block font-semibold text-slate-700 mb-1">Situação</label>
-              <select
-                value={statusFilter}
-                onChange={e => setStatusFilter(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium"
-              >
-                <option value="all">Todas as Situações</option>
-                <option value="ativo">Ativos</option>
-                <option value="ferias">Em Férias</option>
-                <option value="afastado">Afastados</option>
-                <option value="desligado">Desligados</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block font-semibold text-slate-700 mb-1">Acesso ao Sistema</label>
-              <select
-                value={accessFilter}
-                onChange={e => setAccessFilter(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium"
-              >
-                <option value="all">Todos os Acessos</option>
-                <option value="com_login">Com Login</option>
-                <option value="pendente">Convite Pendente</option>
-                <option value="apenas_campo">Apenas Campo</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block font-semibold text-slate-700 mb-1">Regime / Vínculo</label>
-              <select
-                value={contractFilter}
-                onChange={e => setContractFilter(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium"
-              >
-                <option value="all">Todos os Vínculos</option>
-                <option value="clt">CLT</option>
-                <option value="pj">PJ</option>
-                <option value="diarista">Diarista</option>
-                <option value="estagio">Estágio</option>
-              </select>
-            </div>
-
-            <div className="pt-2">
-              <button
-                type="button"
-                onClick={() => setIsFilterModalOpen(false)}
-                className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-semibold cursor-pointer shadow-xs transition"
-              >
-                Aplicar Filtros
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* DROPDOWN FLUTUANTE (PORTAL) */}
+      {/* DROPDOWN MENU */}
       {dropdownMenu && createPortal(
         <div
           style={{ top: `${dropdownMenu.top}px`, left: `${dropdownMenu.left}px` }}
@@ -1448,19 +1513,17 @@ export const HRView: React.FC<HRViewProps> = ({ permissions: propPermissions }) 
             onClick={() => {
               const emp = dropdownMenu.employee;
               setDropdownMenu(null);
-              handleOpenEmployeeDetail(emp);
+              handleOpenEditEmployee(emp);
             }}
             className="w-full px-3.5 py-2 text-slate-700 hover:bg-slate-50 flex items-center gap-2 font-medium cursor-pointer"
           >
             <Edit2 size={13} className="text-sky-600" />
-            <span>Ver Dossiê / Editar</span>
+            <span>Editar Informações</span>
           </button>
 
-          {/* GESTÃO DE ACESSO */}
           {canManageEmployees && (
             <>
               <div className="border-t border-slate-100 my-1" />
-
               {!dropdownMenu.employee.has_system_access ? (
                 <button
                   type="button"
@@ -1468,53 +1531,27 @@ export const HRView: React.FC<HRViewProps> = ({ permissions: propPermissions }) 
                   className="w-full px-3.5 py-2 text-sky-700 hover:bg-sky-50 flex items-center gap-2 font-medium cursor-pointer"
                 >
                   <Key size={13} className="text-sky-600" />
-                  <span>Conceder Acesso (Login)</span>
+                  <span>Conceder Acesso</span>
                 </button>
               ) : (
-                <>
+                dropdownMenu.employee.user_id !== user?.id && (
                   <button
                     type="button"
-                    onClick={() => handleOpenAccessModal(dropdownMenu.employee)}
-                    className="w-full px-3.5 py-2 text-slate-700 hover:bg-slate-50 flex items-center gap-2 font-medium cursor-pointer"
+                    onClick={() => {
+                      const emp = dropdownMenu.employee;
+                      setDropdownMenu(null);
+                      setActionConfirm({ type: 'remover_acesso', employee: emp });
+                    }}
+                    className="w-full px-3.5 py-2 text-amber-700 hover:bg-amber-50 flex items-center gap-2 font-medium cursor-pointer"
                   >
-                    <KeyRound size={13} className="text-slate-500" />
-                    <span>Gerenciar Acesso & Link</span>
+                    <ShieldBan size={13} className="text-amber-600" />
+                    <span>Tirar Acesso</span>
                   </button>
-
-                  {dropdownMenu.employee.user_id !== user?.id && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const emp = dropdownMenu.employee;
-                        setDropdownMenu(null);
-                        setActionConfirm({ type: 'remover_acesso', employee: emp });
-                      }}
-                      className="w-full px-3.5 py-2 text-amber-700 hover:bg-amber-50 flex items-center gap-2 font-medium cursor-pointer"
-                    >
-                      <ShieldBan size={13} className="text-amber-600" />
-                      <span>Tirar Acesso</span>
-                    </button>
-                  )}
-                </>
-              )}
-
-              {dropdownMenu.employee.invite_token && dropdownMenu.employee.invite_status === 'pending' && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    handleCopyInviteLink(dropdownMenu.employee.invite_token);
-                    setDropdownMenu(null);
-                  }}
-                  className="w-full px-3.5 py-2 text-slate-700 hover:bg-slate-50 flex items-center gap-2 font-medium cursor-pointer"
-                >
-                  <Copy size={13} className="text-sky-600" />
-                  <span>Copiar Link de Convite</span>
-                </button>
+                )
               )}
             </>
           )}
 
-          {/* GESTÃO DE SITUAÇÃO FUNCIONAL (ADMISSÕES E AFASTAMENTOS) */}
           {canManageAdmissions && (
             <>
               <div className="border-t border-slate-100 my-1" />
@@ -1531,7 +1568,7 @@ export const HRView: React.FC<HRViewProps> = ({ permissions: propPermissions }) 
                     className="w-full px-3.5 py-2 text-amber-700 hover:bg-amber-50 flex items-center gap-2 cursor-pointer font-medium"
                   >
                     <Sun size={13} className="text-amber-600" />
-                    <span>Colocar em Férias</span>
+                    <span>Dar Férias</span>
                   </button>
 
                   <button
@@ -1544,7 +1581,7 @@ export const HRView: React.FC<HRViewProps> = ({ permissions: propPermissions }) 
                     className="w-full px-3.5 py-2 text-purple-700 hover:bg-purple-50 flex items-center gap-2 cursor-pointer font-medium"
                   >
                     <AlertOctagon size={13} className="text-purple-600" />
-                    <span>Afastar (Licença/INSS)</span>
+                    <span>Baixar INSS / Afastar</span>
                   </button>
 
                   {dropdownMenu.employee.user_id !== user?.id && (
@@ -1573,7 +1610,7 @@ export const HRView: React.FC<HRViewProps> = ({ permissions: propPermissions }) 
                   className="w-full px-3.5 py-2 text-emerald-700 hover:bg-emerald-50 flex items-center gap-2 cursor-pointer font-medium"
                 >
                   <RotateCcw size={13} className="text-emerald-600" />
-                  <span>Reativar para Campo</span>
+                  <span>Reativar Colaborador</span>
                 </button>
               )}
             </>
@@ -1582,139 +1619,19 @@ export const HRView: React.FC<HRViewProps> = ({ permissions: propPermissions }) 
         document.body
       )}
 
-      {/* MODAL: CONCEDER / GERENCIAR ACESSO AO SISTEMA */}
-      {accessModalEmp && (
-        <div className="fixed inset-0 z-[360] flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-xs animate-in fade-in duration-150">
-          <div className="bg-white border border-slate-200 rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-4 animate-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between pb-3 border-b">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center border border-sky-100">
-                  <Key size={18} />
-                </div>
-                <div>
-                  <h4 className="font-bold text-slate-900 text-sm">
-                    {accessModalEmp.has_system_access ? 'Acesso ao Sistema Lume' : 'Conceder Acesso ao Sistema'}
-                  </h4>
-                  <p className="text-[11px] text-slate-400">{accessModalEmp.full_name}</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setAccessModalEmp(null);
-                  setAccessSuccessMessage(null);
-                }}
-                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg cursor-pointer"
-              >
-                <X size={16} />
-              </button>
-            </div>
-
-            {accessSuccessMessage && (
-              <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-start gap-2.5 text-xs text-emerald-900 animate-in fade-in duration-150">
-                <CheckCircle2 size={16} className="text-emerald-600 shrink-0 mt-0.5" />
-                <div className="flex-1">
-                  <strong className="block font-bold">Convite Criado com Sucesso!</strong>
-                  <span className="text-[11px] text-emerald-800 leading-relaxed block mt-0.5">
-                    {accessSuccessMessage}
-                  </span>
-                </div>
-              </div>
-            )}
-
-            <form onSubmit={handleSaveAccessSubmit} className="space-y-3.5 text-xs">
-              <div>
-                <label className="block font-bold text-slate-700 mb-1">E-mail de Login do Colaborador *</label>
-                <input
-                  type="email"
-                  required
-                  placeholder="colaborador@empresa.com.br"
-                  value={accessEmailInput}
-                  onChange={e => setAccessEmailInput(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-medium focus:ring-2 focus:ring-sky-500 text-slate-900"
-                />
-              </div>
-
-              <div>
-                <label className="block font-bold text-slate-700 mb-1">Perfil de Permissões *</label>
-                <select
-                  required
-                  value={accessRoleInput}
-                  onChange={e => setAccessRoleInput(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-semibold cursor-pointer text-slate-900"
-                >
-                  <option value="">Selecione o nível de acesso...</option>
-                  {companyRoles.map(r => (
-                    <option key={r.id} value={r.id}>{r.name}</option>
-                  ))}
-                </select>
-                <span className="text-[10px] text-slate-400 block mt-1">
-                  Os perfis determinam quais módulos e informações o colaborador poderá visualizar ou editar.
-                </span>
-              </div>
-
-              {accessModalEmp.invite_token && (
-                <div className="p-3.5 bg-sky-50/70 border border-sky-200 rounded-2xl space-y-2.5">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[11px] font-bold text-sky-950 flex items-center gap-1">
-                      <Clock size={12} className="text-sky-600" />
-                      <span>Link do Convite Ativo</span>
-                    </span>
-
-                    <button
-                      type="button"
-                      disabled={cancelingInvite}
-                      onClick={handleCancelInviteFromModal}
-                      className="inline-flex items-center gap-1.5 px-3 py-1 bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 rounded-xl text-xs font-bold transition-all shadow-2xs active:scale-98 cursor-pointer disabled:opacity-50"
-                      title="Cancelar este convite e revogar acesso"
-                    >
-                      {cancelingInvite ? <Loader2 size={12} className="animate-spin text-rose-600" /> : <Trash2 size={12} className="text-rose-600" />}
-                      <span>{cancelingInvite ? 'Cancelando...' : 'Cancelar Convite'}</span>
-                    </button>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      readOnly
-                      value={`${window.location.origin}/invite?token=${accessModalEmp.invite_token}`}
-                      className="flex-1 px-2.5 py-1.5 bg-white border border-sky-200 rounded-xl font-mono text-[11px] text-slate-700 select-all"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => handleCopyInviteLink(accessModalEmp.invite_token)}
-                      className="px-3.5 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded-xl font-bold text-xs flex items-center gap-1 cursor-pointer transition shadow-2xs shrink-0 active:scale-98"
-                    >
-                      {copiedLinkToken === accessModalEmp.invite_token ? <Check size={13} /> : <Copy size={13} />}
-                      <span>{copiedLinkToken === accessModalEmp.invite_token ? 'Copiado!' : 'Copiar'}</span>
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAccessModalEmp(null);
-                    setAccessSuccessMessage(null);
-                  }}
-                  className="px-3.5 py-1.5 text-slate-600 hover:bg-slate-100 rounded-xl font-semibold cursor-pointer"
-                >
-                  Fechar
-                </button>
-                <button
-                  type="submit"
-                  disabled={savingAccess || !accessEmailInput.trim()}
-                  className="px-4 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded-xl font-bold shadow-2xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50 active:scale-98"
-                >
-                  {savingAccess ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
-                  <span>{accessModalEmp.invite_token ? 'Salvar e Gerar Novo Link' : 'Gerar Acesso & Convite'}</span>
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+      {/* MODAL DE CRIAÇÃO / EDIÇÃO */}
+      {isEmployeeModalOpen && (
+        <CreateEmployeeModal
+          isOpen={isEmployeeModalOpen}
+          onClose={() => {
+            setIsEmployeeModalOpen(false);
+            setEmployeeToEdit(null);
+          }}
+          departments={departments}
+          jobPositions={jobPositions}
+          employeeToEdit={employeeToEdit}
+          onSuccess={loadHRData}
+        />
       )}
 
       {/* MODAL DE CONFIRMAÇÃO DE AÇÃO */}
@@ -1728,6 +1645,8 @@ export const HRView: React.FC<HRViewProps> = ({ permissions: propPermissions }) 
                 ? 'bg-amber-50 text-amber-600 border-amber-100'
                 : actionConfirm.type === 'ferias'
                 ? 'bg-amber-50 text-amber-600 border-amber-100'
+                : actionConfirm.type === 'afastar'
+                ? 'bg-purple-50 text-purple-600 border-purple-100'
                 : 'bg-emerald-50 text-emerald-600 border-emerald-100'
             }`}>
               {actionConfirm.type === 'desligar' ? (
@@ -1736,6 +1655,8 @@ export const HRView: React.FC<HRViewProps> = ({ permissions: propPermissions }) 
                 <ShieldBan size={22} />
               ) : actionConfirm.type === 'ferias' ? (
                 <Sun size={22} />
+              ) : actionConfirm.type === 'afastar' ? (
+                <AlertOctagon size={22} />
               ) : (
                 <RotateCcw size={22} />
               )}
@@ -1749,7 +1670,7 @@ export const HRView: React.FC<HRViewProps> = ({ permissions: propPermissions }) 
                 : actionConfirm.type === 'ferias'
                 ? 'Registrar Início de Férias'
                 : actionConfirm.type === 'afastar'
-                ? 'Registrar Afastamento'
+                ? 'Registrar Afastamento / INSS'
                 : 'Reativar Colaborador'}
             </h4>
 
@@ -1795,23 +1716,110 @@ export const HRView: React.FC<HRViewProps> = ({ permissions: propPermissions }) 
         </div>
       )}
 
-      {/* DRAWER LATERAL DO COLABORADOR */}
-      {isDetailModalOpen && (
-        <EmployeeDetailModal
-          isOpen={isDetailModalOpen}
-          onClose={() => {
-            setIsDetailModalOpen(false);
-            setSelectedEmployeeForModal(null);
-          }}
-          isNew={isNewEmployeeModal}
-          employee={selectedEmployeeForModal}
-          departments={departments}
-          jobPositions={jobPositions}
-          permissions={permissions}
-          onSaved={() => {
-            loadHRData();
-          }}
-        />
+      {/* POPUP DE ACESSO */}
+      {accessModalEmp && createPortal(
+        <div className="fixed inset-0 z-[500] flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white border border-slate-200 rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-4 animate-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between pb-3 border-b">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center border border-sky-100">
+                  <Key size={18} />
+                </div>
+                <div>
+                  <h4 className="font-bold text-slate-900 text-sm">Acesso ao Sistema Lume</h4>
+                  <p className="text-[11px] text-slate-400">{accessModalEmp.full_name}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAccessModalEmp(null)}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {accessSuccessMessage && (
+              <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-start gap-2.5 text-xs text-emerald-900">
+                <CheckCircle2 size={16} className="text-emerald-600 shrink-0 mt-0.5" />
+                <span>{accessSuccessMessage}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSaveAccessSubmit} className="space-y-3.5 text-xs">
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">E-mail Corporativo *</label>
+                <input
+                  type="email"
+                  required
+                  placeholder="colaborador@empresa.com.br"
+                  value={accessEmailInput}
+                  onChange={e => setAccessEmailInput(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-medium focus:ring-2 focus:ring-sky-500 text-slate-900"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Perfil de Permissões *</label>
+                <select
+                  required
+                  value={accessRoleInput}
+                  onChange={e => setAccessRoleInput(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-semibold cursor-pointer text-slate-900"
+                >
+                  <option value="">Selecione o nível...</option>
+                  {companyRoles.map(r => (
+                    <option key={r.id} value={r.id}>{r.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {accessModalEmp.invite_token && (
+                <div className="p-3.5 bg-sky-50/70 border border-sky-200 rounded-2xl space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-sky-950 flex items-center gap-1">
+                      <Clock size={12} className="text-sky-600" />
+                      <span>Link de Convite Ativo</span>
+                    </span>
+                    <button
+                      type="button"
+                      disabled={cancelingInvite}
+                      onClick={handleCancelInviteFromModal}
+                      className="px-2.5 py-1 bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 rounded-xl text-xs font-bold"
+                    >
+                      {cancelingInvite ? 'Cancelando...' : 'Cancelar Convite'}
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      readOnly
+                      value={`${window.location.origin}/invite?token=${accessModalEmp.invite_token}`}
+                      className="flex-1 px-2.5 py-1.5 bg-white border border-sky-200 rounded-xl font-mono text-[11px]"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleCopyInviteLink(accessModalEmp.invite_token)}
+                      className="px-3.5 py-1.5 bg-sky-600 text-white rounded-xl font-bold text-xs"
+                    >
+                      {copiedLinkToken === accessModalEmp.invite_token ? 'Copiado!' : 'Copiar'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                <button type="button" onClick={() => setAccessModalEmp(null)} className="px-3.5 py-1.5 text-slate-600 rounded-xl font-semibold">
+                  Fechar
+                </button>
+                <button type="submit" disabled={savingAccess || !accessEmailInput.trim()} className="px-4 py-1.5 bg-sky-600 text-white rounded-xl font-bold">
+                  {savingAccess ? 'Salvando...' : 'Salvar e Conceder'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>,
+        document.body
       )}
     </div>
   );

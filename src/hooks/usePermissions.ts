@@ -49,6 +49,16 @@ export interface ModulePermissions {
   canManageInvoices: boolean;
   canPrintMeasurements: boolean;
 
+  // ==========================================
+  // ALMOXARIFADO & ESTOQUE
+  // ==========================================
+  canRequestMaterials: boolean;          // Fazer solicitações de material/EPI
+  canViewInventory: boolean;             // Acessar o módulo e visualizar itens/estoque
+  canManageInventoryItems: boolean;      // Cadastrar e editar itens do catálogo
+  canManageInventoryMovements: boolean;  // Lançar entradas com NF, baixas e movimentações manuais
+  canFulfillMaterialRequests: boolean;   // Atender e recusar solicitações da fila
+  canViewInventoryCosts: boolean;        // Visualizar custos unitários e valores em R$
+
   // RH & Departamento Pessoal
   canViewHR: boolean;
   canManageEmployees: boolean;
@@ -114,6 +124,14 @@ const DEFAULT_PERMISSIONS: ModulePermissions = {
   canManageInvoices: false,
   canPrintMeasurements: false,
 
+  // Almoxarifado Defaults
+  canRequestMaterials: false,
+  canViewInventory: false,
+  canManageInventoryItems: false,
+  canManageInventoryMovements: false,
+  canFulfillMaterialRequests: false,
+  canViewInventoryCosts: false,
+
   // RH Defaults
   canViewHR: false,
   canManageEmployees: false,
@@ -145,7 +163,7 @@ export const usePermissions = () => {
   const isLoadedRef = useRef(false);
 
   const currentUserId = user?.id || user?.profile?.id || (user as any)?.user?.id || null;
-  const currentCompanyId = user?.company?.id || user?.profile?.company_id || null;
+const currentCompanyId = user?.company?.id || (user as any)?.company_id || (user as any)?.profile?.company_id || null;
 
   useEffect(() => {
     let isMounted = true;
@@ -321,6 +339,14 @@ export const usePermissions = () => {
               canManageInvoices: true,
               canPrintMeasurements: true,
 
+              // Almoxarifado para Master
+              canRequestMaterials: true,
+              canViewInventory: true,
+              canManageInventoryItems: true,
+              canManageInventoryMovements: true,
+              canFulfillMaterialRequests: true,
+              canViewInventoryCosts: true,
+
               canViewHR: true,
               canManageEmployees: true,
               canManageSalariesBenefits: true,
@@ -339,7 +365,7 @@ export const usePermissions = () => {
 
         const has = (...keys: string[]) => keys.some((k) => perms.includes(k));
 
-        // Resolução das permissões das Obras (aceitando chaves novas ou legadas salvas no banco)
+        // Resolução das permissões das Obras
         const canViewWorks = has('works_view', 'works.view', 'works_manage');
         const canManageWorkDetails = has('works_edit_details', 'works_create', 'works.edit_details', 'works.create', 'works_manage_details');
         const canDeleteWorks = has('works_delete', 'works.delete');
@@ -349,6 +375,14 @@ export const usePermissions = () => {
         const canManageSchedule = has('work_schedule_view', 'work_schedule_edit', 'works_manage_schedule');
         const canManageWorkFinancial = has('work_financial_view', 'work_prices_view', 'work_measurements_create', 'work_measurements_delete', 'work_invoices_manage', 'work_measurements_print', 'works_manage_financial');
         const canViewDailyLogs = has('works_view_daily_logs', 'works_view');
+
+        // Resolução das permissões do Almoxarifado
+        const canViewInventory = has('inventory_view', 'inventory.view', 'inventory_manage', 'inventory.manage');
+        const canRequestMaterials = has('inventory_request', 'inventory.request', 'inventory_requests_create', 'inventory_view');
+        const canManageInventoryItems = has('inventory_manage_items', 'inventory.manage_items', 'inventory_items_manage', 'inventory_manage');
+        const canManageInventoryMovements = has('inventory_move', 'inventory.move', 'inventory_movements_manage', 'inventory_manage');
+        const canFulfillMaterialRequests = has('inventory_fulfill', 'inventory.fulfill', 'inventory_requests_fulfill', 'inventory_manage');
+        const canViewInventoryCosts = has('inventory_costs_view', 'inventory.costs_view', 'inventory_view_costs', 'work_financial_view', 'work_prices_view');
 
         const resolvedPermissions: ModulePermissions = {
           canViewContacts: has('contacts_view', 'contacts.view', 'contacts_manage', 'contacts.manage', 'contacts_view_all'),
@@ -387,11 +421,19 @@ export const usePermissions = () => {
           canViewSchedule: canManageSchedule,
           canEditSchedule: canManageSchedule,
           canViewWorkFinancial: canManageWorkFinancial,
-          canViewWorkPrices: canManageWorkFinancial, // REGRA: Apenas quem tem financeiro vê preços/valores
+          canViewWorkPrices: canManageWorkFinancial,
           canCreateMeasurements: canManageWorkFinancial,
           canDeleteMeasurements: canManageWorkFinancial,
           canManageInvoices: canManageWorkFinancial,
           canPrintMeasurements: canManageWorkFinancial,
+
+          // Almoxarifado
+          canRequestMaterials,
+          canViewInventory,
+          canManageInventoryItems,
+          canManageInventoryMovements,
+          canFulfillMaterialRequests,
+          canViewInventoryCosts,
 
           // RH & Pessoas
           canViewHR: has('hr_view', 'hr.view', 'hr_manage'),

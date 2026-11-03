@@ -9,7 +9,6 @@ import { DailyWorkLogModal } from './DailyWorkLogModal';
 import {
   Search,
   Filter,
-  Plus,
   Building2,
   User,
   X,
@@ -22,7 +21,6 @@ import {
   PauseCircle,
   Lock,
   Loader2,
-  BookOpenCheck,
   Briefcase
 } from 'lucide-react';
 
@@ -59,14 +57,12 @@ export interface WorkItemData {
 interface WorksViewProps {
   onSelectWork?: (workId: string) => void;
   onOpenContactModal?: (contactId: string) => void;
-  onOpenCreateWorkModal?: () => void;
   permissions?: any;
 }
 
 export const WorksView: React.FC<WorksViewProps> = ({
   onSelectWork,
   onOpenContactModal,
-  onOpenCreateWorkModal,
   permissions: propPermissions
 }) => {
   const { user } = useAuth();
@@ -98,7 +94,6 @@ export const WorksView: React.FC<WorksViewProps> = ({
 
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [isDailyLogModalOpen, setIsDailyLogModalOpen] = useState(false);
-  const [isMobileActionSheetOpen, setIsMobileActionSheetOpen] = useState(false);
 
   const [workStages, setWorkStages] = useState<WorkStageConfig[]>([]);
 
@@ -476,11 +471,11 @@ export const WorksView: React.FC<WorksViewProps> = ({
   }
 
   return (
-    <div className="flex-1 flex flex-col h-full min-w-0 overflow-hidden relative p-3 sm:p-6 lg:p-8 box-border space-y-3">
-      {/* 1. TOPO DA TELA */}
-      <div className="flex items-center justify-between gap-3 pb-1 shrink-0">
+    <div className="flex-1 flex flex-col h-full min-w-0 bg-slate-50/50 p-3 sm:p-6 overflow-y-auto space-y-3.5 relative">
+      {/* 1. TOPO DA TELA (Sem botão de criação solto) */}
+      <div className="flex items-center justify-between gap-3 shrink-0">
         <div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2">         
             <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
               Execução de Obras
             </h1>
@@ -496,19 +491,6 @@ export const WorksView: React.FC<WorksViewProps> = ({
               : 'Acompanhamento operacional e controle de avanço de cada projeto em campo.'}
           </p>
         </div>
-
-        {permissions?.canCreateWorks && (
-          <div className="hidden md:flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => onOpenCreateWorkModal ? onOpenCreateWorkModal() : alert('Abrir modal de criação')}
-              className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white text-xs sm:text-sm font-semibold rounded-xl shadow-xs transition-all cursor-pointer active:scale-98 shrink-0"
-            >
-              <Plus size={16} />
-              <span>Nova Obra</span>
-            </button>
-          </div>
-        )}
       </div>
 
       {/* 2. BARRA DE CONTROLES */}
@@ -745,7 +727,7 @@ export const WorksView: React.FC<WorksViewProps> = ({
 
       {/* 3. VISUALIZAÇÃO KANBAN OU LISTA */}
       {viewMode === 'kanban' ? (
-        <div className="flex-1 min-h-0 overflow-x-auto pb-3 flex gap-3.5 select-none snap-x snap-mandatory no-scrollbar">
+        <div className="flex-1 min-h-0 overflow-x-auto pb-24 md:pb-3 flex gap-3.5 select-none snap-x snap-mandatory no-scrollbar">
           {STAGES.map((stage) => {
             const stageWorks = filteredWorks.filter((w) => w.stage === stage.id);
             const isOver = dragOverStageId === stage.id;
@@ -1003,93 +985,6 @@ export const WorksView: React.FC<WorksViewProps> = ({
               )}
             </tbody>
           </table>
-        </div>
-      )}
-
-      {permissions?.canCompleteWorkTasks && !selectedWorkId && (
-        <button
-          type="button"
-          onClick={() => setIsDailyLogModalOpen(true)}
-          className="hidden md:flex fixed bottom-8 right-8 z-[90] items-center gap-2.5 px-6 py-4 bg-sky-600 hover:bg-sky-500 text-white rounded-full shadow-[0_10px_40px_rgba(2,132,199,0.4)] transition-all hover:-translate-y-1 hover:shadow-[0_15px_50px_rgba(2,132,199,0.5)] cursor-pointer font-bold group"
-          title="Lançar Diário de Obra"
-        >
-          <BookOpenCheck size={22} className="group-hover:scale-110 transition-transform" />
-          <span className="text-sm tracking-wide">Diário de Obra</span>
-        </button>
-      )}
-
-      {!selectedWorkId && (
-        <button
-          type="button"
-          onClick={() => setIsMobileActionSheetOpen(true)}
-          className="md:hidden fixed bottom-6 right-6 z-40 w-14 h-14 bg-sky-600 hover:bg-sky-500 active:scale-95 text-white rounded-full shadow-2xl flex items-center justify-center cursor-pointer transition-all border border-sky-400/40"
-          title="Ações de Obras"
-        >
-          <Plus size={26} strokeWidth={2.5} />
-        </button>
-      )}
-
-      {isMobileActionSheetOpen && (
-        <div className="md:hidden fixed inset-0 z-[150] flex flex-col justify-end bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-150">
-          <div className="absolute inset-0" onClick={() => setIsMobileActionSheetOpen(false)} />
-          
-          <div className="relative bg-white rounded-t-3xl p-5 space-y-3 animate-in slide-in-from-bottom duration-200 border-t border-slate-200">
-            <div className="w-12 h-1.5 bg-slate-200 rounded-full mx-auto mb-2" />
-            
-            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider text-center">
-              Ações de Obras
-            </h3>
-
-            <div className="space-y-2 pt-1">
-              {permissions?.canCreateWorks && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsMobileActionSheetOpen(false);
-                    if (onOpenCreateWorkModal) onOpenCreateWorkModal();
-                  }}
-                  className="w-full p-3 bg-slate-50 hover:bg-slate-100 rounded-2xl flex items-center gap-3 text-slate-800 font-semibold text-xs transition-colors"
-                >
-                  <div className="w-9 h-9 rounded-xl bg-sky-100 text-sky-700 flex items-center justify-center shrink-0">
-                    <Plus size={18} />
-                  </div>
-                  <div className="text-left">
-                    <p className="text-sm font-bold text-slate-900">Nova Obra</p>
-                    <p className="text-[11px] text-slate-500 font-normal">Cadastrar nova obra no sistema</p>
-                  </div>
-                </button>
-              )}
-
-              {permissions?.canCompleteWorkTasks && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsMobileActionSheetOpen(false);
-                    setIsDailyLogModalOpen(true);
-                  }}
-                  className="w-full p-3 bg-slate-50 hover:bg-slate-100 rounded-2xl flex items-center gap-3 text-slate-800 font-semibold text-xs transition-colors"
-                >
-                  <div className="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center shrink-0">
-                    <BookOpenCheck size={18} />
-                  </div>
-                  <div className="text-left">
-                    <p className="text-sm font-bold text-slate-900">Diário de Obra</p>
-                    <p className="text-[11px] text-slate-500 font-normal">Lançar ou consultar relatórios de campo</p>
-                  </div>
-                </button>
-              )}
-            </div>
-
-            <div className="pt-2">
-              <button
-                type="button"
-                onClick={() => setIsMobileActionSheetOpen(false)}
-                className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-xl"
-              >
-                Fechar
-              </button>
-            </div>
-          </div>
         </div>
       )}
 

@@ -57,7 +57,6 @@ export const ContactsView: React.FC<ContactsViewProps> = ({
   const { user } = useAuth();
   const { permissions: hookPermissions } = usePermissions();
   
-  // Utiliza as permissões já resolvidas
   const permissions = propPermissions || hookPermissions;
 
   const [contacts, setContacts] = useState<ContactItem[]>([]);
@@ -273,7 +272,7 @@ export const ContactsView: React.FC<ContactsViewProps> = ({
 
   return (
     <div className="flex flex-col h-full w-full min-w-0 overflow-hidden relative space-y-3">
-      {/* 1. TOPO DA TELA: Título com Subtítulo no Desktop e Botão de Novo Contato */}
+      {/* 1. TOPO DA TELA: Título e Botão Normal visível no Desktop */}
       <div className="flex items-center justify-between gap-3 shrink-0">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
@@ -296,9 +295,8 @@ export const ContactsView: React.FC<ContactsViewProps> = ({
         )}
       </div>
 
-      {/* 2. BARRA DE PESQUISA, SELETOR (TODOS/PESSOAS/EMPRESAS) E FILTRO */}
+      {/* 2. BARRA DE PESQUISA, SELETOR E FILTRO */}
       <div className="bg-white p-2.5 rounded-2xl border border-slate-200/80 shadow-2xs flex flex-col md:flex-row items-stretch md:items-center justify-between gap-2.5 shrink-0 relative">
-        {/* Campo de Busca */}
         <div className="relative flex-1 min-w-[200px]">
           <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
@@ -318,9 +316,7 @@ export const ContactsView: React.FC<ContactsViewProps> = ({
           )}
         </div>
 
-        {/* Agrupamento: Seletor de Tipo e Filtro */}
         <div className="flex items-center gap-2 shrink-0 justify-between md:justify-end">
-          {/* Todos / Pessoas / Empresas */}
           <div className="flex items-center p-1 bg-slate-100/80 rounded-xl border border-slate-200/70 text-xs shrink-0 overflow-x-auto no-scrollbar flex-1 md:flex-initial justify-between md:justify-start">
             <button
               type="button"
@@ -380,7 +376,6 @@ export const ContactsView: React.FC<ContactsViewProps> = ({
             </button>
           </div>
 
-          {/* Botão de Filtros */}
           <div className="relative shrink-0" ref={filterRef}>
             <button
               type="button"
@@ -502,7 +497,7 @@ export const ContactsView: React.FC<ContactsViewProps> = ({
       </div>
 
       {/* 3. FEED DE CONTATOS NO MOBILE */}
-      <div className="block md:hidden flex-1 min-h-0 overflow-y-auto no-scrollbar space-y-2 pb-20">
+      <div className="block md:hidden flex-1 min-h-0 overflow-y-auto no-scrollbar space-y-2 pb-24">
         {loading ? (
           <div className="p-10 text-center bg-white rounded-2xl border border-slate-200/80 shadow-2xs text-slate-400">
             <Loader2 size={22} className="animate-spin mx-auto mb-2 text-sky-600" />
@@ -556,7 +551,7 @@ export const ContactsView: React.FC<ContactsViewProps> = ({
                   {contact.display_name}
                 </h3>
                 <span className="text-xs text-slate-400 font-medium block truncate mt-0.5">
-                  {contact.type === 'person' ? 'Pessoa Física' : 'Pessoa Jurídica'}
+                  {contact.subtitle || (contact.type === 'person' ? 'Pessoa Física' : 'Pessoa Jurídica')}
                 </span>
               </div>
             </div>
@@ -568,7 +563,7 @@ export const ContactsView: React.FC<ContactsViewProps> = ({
         </div>
       </div>
 
-      {/* 4. TABELA DE CONTATOS NO DESKTOP: Estende até o fim da tela e tem rolagem suave */}
+      {/* 4. TABELA DE CONTATOS NO DESKTOP */}
       <div className="hidden md:flex flex-col flex-1 min-h-0 bg-white rounded-2xl border border-slate-200/80 shadow-2xs overflow-hidden">
         <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar">
           <table className="w-full text-left border-collapse">
@@ -600,19 +595,6 @@ export const ContactsView: React.FC<ContactsViewProps> = ({
                       <p className="text-slate-400 text-xs">
                         Tente ajustar a busca ou limpar os filtros aplicados.
                       </p>
-                      {(search || activeFiltersCount > 0 || selectedType !== 'all') && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSearch('');
-                            setSelectedType('all');
-                            handleClearFilters();
-                          }}
-                          className="text-xs text-sky-600 font-semibold hover:underline pt-1 cursor-pointer"
-                        >
-                          Limpar todos os filtros
-                        </button>
-                      )}
                     </div>
                   </td>
                 </tr>
@@ -624,7 +606,6 @@ export const ContactsView: React.FC<ContactsViewProps> = ({
                     title="Clique para abrir os detalhes do contato"
                     className="hover:bg-slate-50/80 transition-colors group cursor-pointer"
                   >
-                    {/* Avatar e Nome */}
                     <td className="py-3.5 px-5">
                       <div className="flex items-center gap-3">
                         <div className="relative shrink-0">
@@ -666,7 +647,6 @@ export const ContactsView: React.FC<ContactsViewProps> = ({
                       </div>
                     </td>
 
-                    {/* Relação Comercial */}
                     <td className="py-3.5 px-4 whitespace-nowrap">
                       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-md text-[11px] font-semibold border capitalize ${
                         contact.business_relation_type === 'cliente'
@@ -679,7 +659,6 @@ export const ContactsView: React.FC<ContactsViewProps> = ({
                       </span>
                     </td>
 
-                    {/* Documento */}
                     <td className="py-3.5 px-4 whitespace-nowrap">
                       {contact.document ? (
                         <span className="font-mono text-xs text-slate-700 bg-slate-50 px-2 py-1 rounded-md border border-slate-200/60 inline-block">
@@ -690,7 +669,6 @@ export const ContactsView: React.FC<ContactsViewProps> = ({
                       )}
                     </td>
 
-                    {/* Telefone */}
                     <td className="py-3.5 px-4 whitespace-nowrap">
                       {contact.phone ? (
                         contact.is_whatsapp ? (
@@ -714,7 +692,6 @@ export const ContactsView: React.FC<ContactsViewProps> = ({
                       )}
                     </td>
 
-                    {/* Localização */}
                     <td className="py-3.5 px-5 text-slate-600 text-xs whitespace-nowrap">
                       {contact.city ? (
                         <div className="inline-flex items-center gap-1">
@@ -732,7 +709,6 @@ export const ContactsView: React.FC<ContactsViewProps> = ({
           </table>
         </div>
 
-        {/* Rodapé Desktop */}
         <div className="py-3 px-5 bg-slate-50/70 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 shrink-0">
           <span>
             Exibindo <b>{filteredContacts.length}</b> de <b>{contacts.length}</b> contatos
@@ -740,18 +716,6 @@ export const ContactsView: React.FC<ContactsViewProps> = ({
           <span className="text-[11px] text-slate-400">Lume Contatos v1.0</span>
         </div>
       </div>
-
-      {/* BOTÃO FLUTUANTE (FAB) MOBILE */}
-      {permissions?.canCreateEditContacts && (
-        <button
-          type="button"
-          onClick={onOpenCreateModal}
-          className="md:hidden fixed bottom-6 right-6 z-40 w-14 h-14 bg-sky-600 hover:bg-sky-500 active:scale-95 text-white rounded-full shadow-2xl flex items-center justify-center cursor-pointer transition-all border border-sky-400/40"
-          title="Novo Contato"
-        >
-          <Plus size={26} strokeWidth={2.5} />
-        </button>
-      )}
 
       {/* Modais Vinculados */}
       <ContactProfileModal

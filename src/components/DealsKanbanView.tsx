@@ -73,7 +73,6 @@ export const DealsKanbanView: React.FC<DealsKanbanViewProps> = ({
   const { user } = useAuth();
   const { permissions: hookPermissions } = usePermissions();
 
-  // Permissões instantâneas: se vier pelo pai renderiza no frame 0 sem delay de 2 segundos
   const permissions = propPermissions || hookPermissions;
 
   const [stages, setStages] = useState<PipelineStage[]>([]);
@@ -444,7 +443,6 @@ export const DealsKanbanView: React.FC<DealsKanbanViewProps> = ({
 
   const renderFilterFields = () => (
     <>
-      {/* Responsável */}
       {isAdmin && teamMembers.length > 0 && (
         <div>
           <label className="block font-semibold text-slate-700 mb-1">Responsável Comercial</label>
@@ -461,7 +459,6 @@ export const DealsKanbanView: React.FC<DealsKanbanViewProps> = ({
         </div>
       )}
 
-      {/* Perfil do Contato */}
       <div>
         <label className="block font-semibold text-slate-700 mb-1">Perfil do Contato</label>
         <div className="grid grid-cols-3 gap-1 bg-slate-50 p-1 border border-slate-200 rounded-xl text-center">
@@ -480,7 +477,6 @@ export const DealsKanbanView: React.FC<DealsKanbanViewProps> = ({
         </div>
       </div>
 
-      {/* Tipo de Serviço */}
       <div>
         <label className="block font-semibold text-slate-700 mb-1">Tipo de Serviço</label>
         <select
@@ -495,7 +491,6 @@ export const DealsKanbanView: React.FC<DealsKanbanViewProps> = ({
         </select>
       </div>
 
-      {/* Parceiro / Indicador */}
       <div>
         <label className="block font-semibold text-slate-700 mb-1">Parceiro / Indicador</label>
         <select
@@ -510,7 +505,6 @@ export const DealsKanbanView: React.FC<DealsKanbanViewProps> = ({
         </select>
       </div>
 
-      {/* Previsão de Fechamento */}
       <div>
         <label className="block font-semibold text-slate-700 mb-1">Previsão de Fechamento</label>
         <select
@@ -534,7 +528,7 @@ export const DealsKanbanView: React.FC<DealsKanbanViewProps> = ({
       <div className="flex items-center justify-between gap-3 pb-2.5 shrink-0">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-lg sm:text-2xl font-bold text-slate-900 tracking-tight">
+            <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
               <span className="sm:hidden">Funil de vendas</span>
               <span className="hidden sm:inline">{isAdmin ? 'Funil Comercial' : 'Meu Funil Comercial'}</span>
             </h1>
@@ -544,7 +538,7 @@ export const DealsKanbanView: React.FC<DealsKanbanViewProps> = ({
               </span>
             )}
           </div>
-          <p className="hidden sm:block text-xs text-slate-500 mt-0.5">
+          <p className="hidden sm:block text-xs sm:text-sm text-slate-500 mt-0.5">
             {showFrozenOnly 
               ? 'Exibindo oportunidades pausadas temporariamente.'
               : isAdmin
@@ -584,10 +578,8 @@ export const DealsKanbanView: React.FC<DealsKanbanViewProps> = ({
         </div>
       </div>
 
-      {/* 2. BARRA DE CONTROLES: Pesquisa isolada no mobile | Botão de filtro à direita dos botões */}
+      {/* 2. BARRA DE CONTROLES */}
       <div className="bg-white p-2 sm:p-2.5 rounded-2xl border border-slate-200/80 shadow-2xs mb-3 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-2 shrink-0">
-        
-        {/* Barra de Pesquisa (Sozinha em sua linha no mobile) */}
         <div className="relative flex-1 min-w-0">
           <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
@@ -607,10 +599,7 @@ export const DealsKanbanView: React.FC<DealsKanbanViewProps> = ({
           )}
         </div>
 
-        {/* Grupo da Direita: Status + Botão de Filtros */}
         <div className="flex items-center gap-1.5 justify-between sm:justify-end shrink-0">
-          
-          {/* Alternador de Status */}
           <div className="flex items-center gap-1 bg-slate-100/80 p-1 rounded-xl border border-slate-200/60 shrink-0 overflow-x-auto no-scrollbar flex-1 sm:flex-initial justify-between sm:justify-start">
             <button
               type="button"
@@ -703,7 +692,6 @@ export const DealsKanbanView: React.FC<DealsKanbanViewProps> = ({
             </button>
           </div>
 
-          {/* Botão de Filtros Ancorado (Desktop: Popover anexo | Mobile: Bottom-sheet) */}
           <div className="relative shrink-0" ref={filterContainerRef}>
             <button
               type="button"
@@ -724,7 +712,6 @@ export const DealsKanbanView: React.FC<DealsKanbanViewProps> = ({
               )}
             </button>
 
-            {/* POPOVER DESKTOP: Abre anexado logo abaixo do botão sem fundo escuro */}
             {isFilterOpen && (
               <div className="hidden md:block absolute right-0 top-full mt-2 w-80 bg-white border border-slate-200 rounded-2xl shadow-xl p-4 z-50 animate-in fade-in zoom-in-95 duration-100 space-y-3.5 text-xs text-left">
                 <div className="flex items-center justify-between pb-2 border-b border-slate-100">
@@ -766,7 +753,7 @@ export const DealsKanbanView: React.FC<DealsKanbanViewProps> = ({
         </div>
       </div>
 
-      {/* BOTTOM SHEET MOBILE: Abre deslizando de baixo para cima */}
+      {/* BOTTOM SHEET MOBILE */}
       {isFilterOpen && (
         <div className="md:hidden fixed inset-0 z-[150] flex flex-col justify-end bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-150">
           <div className="absolute inset-0" onClick={() => setIsFilterOpen(false)} />
@@ -811,10 +798,10 @@ export const DealsKanbanView: React.FC<DealsKanbanViewProps> = ({
         </div>
       )}
 
-      {/* 3. ÁREA DO KANBAN COM CARDS ENXUTOS */}
+      {/* 3. ÁREA DO KANBAN */}
       <div 
         ref={kanbanContainerRef}
-        className="flex-1 min-h-0 overflow-x-auto pb-3 flex gap-3 select-none snap-x snap-mandatory no-scrollbar"
+        className="flex-1 min-h-0 overflow-x-auto pb-24 md:pb-3 flex gap-3 select-none snap-x snap-mandatory no-scrollbar"
       >
         {stages.map((stage) => {
           const stageOpps = filteredOpportunities.filter((op) => op.stage_id === stage.id);
@@ -838,7 +825,6 @@ export const DealsKanbanView: React.FC<DealsKanbanViewProps> = ({
                     : 'border-slate-200/90'
               }`}
             >
-              {/* Topo da Coluna */}
               <div 
                 className="p-3 bg-white border-b border-slate-200/80 shrink-0"
                 style={{ borderTop: `3px solid ${stageColor}` }}
@@ -865,7 +851,6 @@ export const DealsKanbanView: React.FC<DealsKanbanViewProps> = ({
                 )}
               </div>
 
-              {/* Lista de Cards Enxutos */}
               <div className="flex-1 min-h-0 overflow-y-auto p-2.5 space-y-2.5 no-scrollbar">
                 {stageOpps.length === 0 ? (
                   <div className={`h-28 flex items-center justify-center border-2 border-dashed rounded-xl text-xs italic transition-colors ${
@@ -900,7 +885,6 @@ export const DealsKanbanView: React.FC<DealsKanbanViewProps> = ({
                             : 'border-slate-200/90 shadow-2xs hover:shadow-md hover:border-sky-300 active:scale-[0.99]'
                         }`}
                       >
-                        {/* 1. TÍTULO E BADGE DE STATUS OU PARADO */}
                         <div className="flex items-start justify-between gap-2">
                           <div className="flex-1 min-w-0 pr-1">
                             <h4 className="font-bold text-slate-900 text-xs sm:text-sm group-hover:text-sky-600 transition-colors line-clamp-2">
@@ -931,7 +915,6 @@ export const DealsKanbanView: React.FC<DealsKanbanViewProps> = ({
                           </div>
                         </div>
 
-                        {/* 2. CONTATO */}
                         {op.contact && (
                           <div 
                             onClick={(e) => {
@@ -955,7 +938,6 @@ export const DealsKanbanView: React.FC<DealsKanbanViewProps> = ({
                           </div>
                         )}
 
-                        {/* 3. TIPO DE OPORTUNIDADE / SERVIÇO */}
                         {op.service_type && (
                           <div className="mt-2">
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-slate-100 text-slate-600 border border-slate-200/60 truncate">
@@ -965,7 +947,6 @@ export const DealsKanbanView: React.FC<DealsKanbanViewProps> = ({
                           </div>
                         )}
 
-                        {/* RODAPÉ DO CARD: VALOR & RESPONSÁVEL */}
                         <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between text-xs">
                           <span className="font-bold text-slate-900 block">
                             {formatCurrency(op.estimated_value)}
@@ -999,18 +980,6 @@ export const DealsKanbanView: React.FC<DealsKanbanViewProps> = ({
           );
         })}
       </div>
-
-      {/* 4. BOTÃO FLUTUANTE (FAB) MOBILE */}
-      {canManage && (
-        <button
-          type="button"
-          onClick={onOpenCreateOpportunityModal}
-          className="md:hidden fixed bottom-6 right-6 z-40 w-14 h-14 bg-sky-600 hover:bg-sky-500 active:scale-95 text-white rounded-full shadow-2xl flex items-center justify-center cursor-pointer transition-all border border-sky-400/40"
-          title="Nova Negociação"
-        >
-          <Plus size={26} strokeWidth={2.5} />
-        </button>
-      )}
 
       {/* Modal de Perfil de Contato */}
       {isContactProfileModalOpen && selectedContactId && (

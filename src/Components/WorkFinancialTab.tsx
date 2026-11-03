@@ -17,7 +17,12 @@ import {
   CreditCard,
   Check,
   Printer,
-  Lock
+  Lock,
+  TrendingUp,
+  DollarSign,
+  Users,
+  Calendar,
+  AlertCircle
 } from 'lucide-react';
 
 interface WorkMeasurement {
@@ -64,6 +69,19 @@ interface WorkInvoice {
   notes?: string | null;
 }
 
+interface TaskEntryLaborItem {
+  id: string;
+  entry_date: string;
+  quantity_executed: number;
+  executed_by: string[];
+  labor_cost: number;
+  workers_count: number;
+  daily_total_labor_cost: number;
+  work_task_id: string;
+  is_measured: boolean;
+  notes?: string | null;
+}
+
 interface WorkFinancialTabProps {
   workId: string;
   contractAmount?: number;
@@ -105,7 +123,7 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
   const currentUserId = user?.id || user?.profile?.id || (user as any)?.user?.id || null;
 
   const [loading, setLoading] = useState(true);
-  const [activeSubTab, setActiveSubTab] = useState<'measurements' | 'invoices'>('measurements');
+  const [activeSubTab, setActiveSubTab] = useState<'measurements' | 'invoices' | 'labor_costs'>('measurements');
 
   const [measurements, setMeasurements] = useState<WorkMeasurement[]>([]);
   const [invoices, setInvoices] = useState<WorkInvoice[]>([]);
@@ -113,8 +131,8 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
   const [workTasks, setWorkTasks] = useState<any[]>([]);
   const [workMeta, setWorkMeta] = useState<{ assigned_to?: string | null; commercial_owner_id?: string | null } | null>(null);
   
-  // Apontamentos Diários (Apenas os NÃO medidos)
-  const [taskEntries, setTaskEntries] = useState<any[]>([]);
+  // Apontamentos Diários (Com Custos e Histórico de Execução)
+  const [allTaskEntries, setAllTaskEntries] = useState<TaskEntryLaborItem[]>([]);
 
   // Modal Novo Boletim de Medição
   const [isCreateBmModalOpen, setIsCreateBmModalOpen] = useState(false);
@@ -148,16 +166,13 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
   const [invoiceBmId, setInvoiceBmId] = useState<string | null>(null);
   const [savingInvoice, setSavingInvoice] = useState(false);
 
-  // -------------------------------------------------------------
-  // REGRAS DAS PERMISSÕES SIMPLIFICADAS
-  // -------------------------------------------------------------
+  // Permissões
   const canAccessFinancial = Boolean(
     permissions.isOwnerOrAdmin ||
     permissions.canManageWorkFinancial ||
     permissions.canViewWorkFinancial
   );
 
-  // REGRA ESTRITA: Ver valores em R$
   const canSeePrices = useMemo(() => {
     if (permissions.isOwnerOrAdmin) return true;
     if (permissions.canManageWorkFinancial || permissions.canViewWorkFinancial || permissions.canViewWorkPrices) return true;
@@ -169,7 +184,6 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
     return isTechnicalResponsible || isCommercialResponsible;
   }, [permissions, currentUserId, workMeta]);
 
-  // Carrega os responsáveis da obra para validar Técnico/Comercial
   useEffect(() => {
     const fetchWorkMeta = async () => {
       try {
@@ -218,8 +232,7 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
           .from('work_task_entries')
           .select('*')
           .eq('work_id', workId)
-          .eq('is_measured', false)
-          .order('entry_date', { ascending: true })
+          .order('entry_date', { ascending: false })
       ]);
 
       if (mRes.error) throw mRes.error;
@@ -241,7 +254,21 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
       setInvoices(invRes.data || []);
       setWorkItems(loadedItems);
       setWorkTasks(loadedTasks);
-      setTaskEntries(entriesRes.data || []);
+      
+      const parsedEntries: TaskEntryLaborItem[] = (entriesRes.data || []).map((e: any) => ({
+        id: e.id,
+        entry_date: e.entry_date,
+        quantity_executed: Number(e.quantity_executed) || 0,
+        executed_by: Array.isArray(e.executed_by) ? e.executed_by : [],
+        labor_cost: Number(e.labor_cost) || 0,
+        workers_count: Number(e.workers_count) || 0,
+        daily_total_labor_cost: Number(e.daily_total_labor_cost) || 0,
+        work_task_id: e.work_task_id,
+        is_measured: Boolean(e.is_measured),
+        notes: e.notes
+      }));
+
+      setAllTaskEntries(parsedEntries);
     } catch (err) {
       console.error('Erro ao carregar dados financeiros:', err);
     } finally {
@@ -255,7 +282,6 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
     }
   }, [loadFinancialData, canAccessFinancial]);
 
-  // Mapas rápidos
   const itemsMap = useMemo(() => {
     const map = new Map<string, any>();
     workItems.forEach(item => map.set(item.id, item));
@@ -309,15 +335,16 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
     return it.item_title.endsWith('/') ? it.item_title : `${it.item_title} /`;
   }, [itemsMap, tasksMap, getHierarchyArray]);
 
+  // Apontamentos elegíveis para medição (não medidos e com quantitativo > 0)
   const availableEntriesToMeasure = useMemo(() => {
     if (!bmStartDate || !bmEndDate) return [];
     
-    return taskEntries.filter(entry => {
+    return allTaskEntries.filter(entry => {
       const entryDate = entry.entry_date;
-      const qty = Number(entry.quantity_executed) || 0;
-      return entryDate >= bmStartDate && entryDate <= bmEndDate && qty > 0;
+      const qty = entry.quantity_executed;
+      return !entry.is_measured && entryDate >= bmStartDate && entryDate <= bmEndDate && qty > 0;
     });
-  }, [taskEntries, bmStartDate, bmEndDate]);
+  }, [allTaskEntries, bmStartDate, bmEndDate]);
 
   const availableItems = useMemo(() => {
     return workItems.filter(i => {
@@ -339,9 +366,8 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
     setBmNotes('');
     setManualAmount('');
 
-    const initialAvailableEntries = taskEntries.filter(e => {
-      const qty = Number(e.quantity_executed) || 0;
-      return e.entry_date >= startOfMonth && e.entry_date <= today && qty > 0;
+    const initialAvailableEntries = allTaskEntries.filter(e => {
+      return !e.is_measured && e.entry_date >= startOfMonth && e.entry_date <= today && e.quantity_executed > 0;
     });
     
     if (measurementType === 'por_subitem') {
@@ -416,6 +442,7 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
     }
   };
 
+  // KPIs Financeiros Expandidos (Medição vs. Mão de Obra Real)
   const kpis = useMemo(() => {
     const totalMeasured = measurements.reduce((acc, m) => acc + (Number(m.total_measured_amount) || 0), 0);
     const totalInvoiced = invoices.reduce((acc, inv) => acc + (Number(inv.amount) || 0), 0);
@@ -426,6 +453,10 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
       .filter(inv => inv.status === 'pendente' || inv.status === 'atrasado')
       .reduce((acc, inv) => acc + (Number(inv.amount) || 0), 0);
 
+    const totalLaborCostReal = allTaskEntries.reduce((acc, e) => acc + (e.labor_cost || 0), 0);
+    const grossMargin = totalMeasured - totalLaborCostReal;
+    const grossMarginPercent = totalMeasured > 0 ? Math.round((grossMargin / totalMeasured) * 100) : 0;
+
     const balanceToMeasure = Math.max(0, contractAmount - totalMeasured);
     const measuredPercent = contractAmount > 0 ? Math.min(100, Math.round((totalMeasured / contractAmount) * 100)) : 0;
 
@@ -435,10 +466,35 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
       totalInvoiced,
       totalPaid,
       pendingToReceive,
+      totalLaborCostReal,
+      grossMargin,
+      grossMarginPercent,
       balanceToMeasure,
       measuredPercent
     };
-  }, [measurements, invoices, contractAmount]);
+  }, [measurements, invoices, contractAmount, allTaskEntries]);
+
+  // Agrupamento de custo por colaborador para a tabela analítica
+  const laborCostByWorker = useMemo(() => {
+    const map = new Map<string, { totalCost: number; tasksCount: number }>();
+
+    allTaskEntries.forEach(entry => {
+      const split = (entry.labor_cost || 0) / Math.max(1, entry.executed_by.length);
+      entry.executed_by.forEach(name => {
+        const clean = name.trim();
+        if (!clean) return;
+        const current = map.get(clean) || { totalCost: 0, tasksCount: 0 };
+        map.set(clean, {
+          totalCost: current.totalCost + split,
+          tasksCount: current.tasksCount + 1
+        });
+      });
+    });
+
+    return Array.from(map.entries())
+      .map(([name, data]) => ({ name, ...data }))
+      .sort((a, b) => b.totalCost - a.totalCost);
+  }, [allTaskEntries]);
 
   const handleCreateMeasurement = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -686,15 +742,15 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
     return (
       <div className="flex-1 flex flex-col items-center justify-center h-full text-slate-400 text-xs py-20">
         <Loader2 size={24} className="animate-spin text-sky-600 mb-2" />
-        <span className="font-semibold text-slate-600">Sincronizando financeiro da obra...</span>
+        <span className="font-semibold text-slate-600">Sincronizando financeiro e mão de obra...</span>
       </div>
     );
   }
 
   return (
     <div className="flex flex-col h-full space-y-4 select-none pb-4">
-      {/* KPIS */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      {/* KPIS GERAIS */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-2xs space-y-1">
           <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Valor do Contrato</span>
           <strong className="text-slate-900 text-base lg:text-lg font-black block">
@@ -716,6 +772,37 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
           </div>
         </div>
 
+        {/* Card: Custo Total de Mão de Obra Real */}
+        <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-2xs space-y-1">
+          <span className="text-[10px] text-indigo-700 font-bold uppercase tracking-wider block flex items-center gap-1">
+            <Users size={12} className="text-indigo-600" />
+            <span>Mão de Obra (Real)</span>
+          </span>
+          <strong className="text-indigo-950 text-base lg:text-lg font-black block">
+            {canSeePrices ? formatCurrency(kpis.totalLaborCostReal) : 'R$ —'}
+          </strong>
+          <span className="text-[10px] text-indigo-600 font-medium">Lançado via diário</span>
+        </div>
+
+        {/* Card: Margem Bruta (Medido x Mão de Obra) */}
+        <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-2xs space-y-1">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block flex items-center gap-1">
+              <TrendingUp size={12} className="text-emerald-600" />
+              <span>Margem Direta</span>
+            </span>
+            {canSeePrices && (
+              <span className={`text-[10px] font-black ${kpis.grossMargin >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                {kpis.grossMarginPercent}%
+              </span>
+            )}
+          </div>
+          <strong className={`text-base lg:text-lg font-black block ${kpis.grossMargin >= 0 ? 'text-emerald-900' : 'text-rose-700'}`}>
+            {canSeePrices ? formatCurrency(kpis.grossMargin) : 'R$ —'}
+          </strong>
+          <span className="text-[10px] text-slate-400 font-medium">Medido - Mão de obra</span>
+        </div>
+
         <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-2xs space-y-1">
           <span className="text-[10px] text-emerald-700 font-bold uppercase tracking-wider block flex items-center gap-1">
             <CheckCircle2 size={11} />
@@ -725,17 +812,6 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
             {canSeePrices ? formatCurrency(kpis.totalPaid) : 'R$ —'}
           </strong>
           <span className="text-[10px] text-emerald-600 font-medium">Faturas quitadas</span>
-        </div>
-
-        <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-2xs space-y-1">
-          <span className="text-[10px] text-amber-700 font-bold uppercase tracking-wider block flex items-center gap-1">
-            <Clock size={11} />
-            <span>A Receber / Faturar</span>
-          </span>
-          <strong className="text-amber-900 text-base lg:text-lg font-black block">
-            {canSeePrices ? formatCurrency(kpis.pendingToReceive) : 'R$ —'}
-          </strong>
-          <span className="text-[10px] text-amber-600 font-medium">Faturas em aberto</span>
         </div>
       </div>
 
@@ -752,6 +828,7 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
             <Receipt size={14} />
             <span>Boletins de Medição ({measurements.length})</span>
           </button>
+
           <button
             type="button"
             onClick={() => setActiveSubTab('invoices')}
@@ -760,12 +837,23 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
             }`}
           >
             <CreditCard size={14} />
-            <span>Faturamento & Contas a Receber ({invoices.length})</span>
+            <span>Faturamento ({invoices.length})</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveSubTab('labor_costs')}
+            className={`px-3 py-1.5 rounded-lg transition cursor-pointer flex items-center gap-1.5 ${
+              activeSubTab === 'labor_costs' ? 'bg-white text-sky-700 font-bold shadow-2xs' : 'text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <DollarSign size={14} />
+            <span>Resultado & Mão de Obra</span>
           </button>
         </div>
 
         <div>
-          {activeSubTab === 'measurements' ? (
+          {activeSubTab === 'measurements' && (
             <button
               type="button"
               onClick={handleOpenCreateBmModal}
@@ -774,7 +862,9 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
               <Plus size={14} />
               <span>Nova Medição</span>
             </button>
-          ) : (
+          )}
+
+          {activeSubTab === 'invoices' && (
             <button
               type="button"
               onClick={() => {
@@ -794,8 +884,8 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
         </div>
       </div>
 
-      {/* CONTEÚDO ATIVO */}
-      {activeSubTab === 'measurements' ? (
+      {/* CONTEÚDO 1: BOLETINS DE MEDIÇÃO */}
+      {activeSubTab === 'measurements' && (
         <div className="flex-1 min-h-0 bg-white border border-slate-200 rounded-2xl shadow-2xs flex flex-col overflow-hidden">
           <div className="flex-1 min-h-0 overflow-y-auto">
             {measurements.length === 0 ? (
@@ -872,7 +962,10 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
             )}
           </div>
         </div>
-      ) : (
+      )}
+
+      {/* CONTEÚDO 2: FATURAMENTO */}
+      {activeSubTab === 'invoices' && (
         <div className="flex-1 min-h-0 bg-white border border-slate-200 rounded-2xl shadow-2xs flex flex-col overflow-hidden">
           <div className="flex-1 min-h-0 overflow-y-auto">
             {invoices.length === 0 ? (
@@ -947,6 +1040,94 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
         </div>
       )}
 
+      {/* CONTEÚDO 3: DEMONSTRATIVO DE MÃO DE OBRA REAL & MARGEM */}
+      {activeSubTab === 'labor_costs' && (
+        <div className="space-y-4">
+          {!canSeePrices ? (
+            <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center text-slate-400 space-y-2">
+              <Lock size={32} className="mx-auto text-slate-300" />
+              <p className="font-bold text-slate-800 text-sm">Acesso Restrito ao Demonstrativo de Custos</p>
+              <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                Você não possui permissão para visualizar custos de mão de obra ou margem operacional desta obra.
+              </p>
+            </div>
+          ) : (
+            <>
+              {/* Comparativo de Desempenho */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs space-y-2">
+                  <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Receita Medida</span>
+                  <strong className="text-xl font-black text-slate-900 block">{formatCurrency(kpis.totalMeasured)}</strong>
+                  <p className="text-[11px] text-slate-400">Total apurado e aprovado para faturamento</p>
+                </div>
+
+                <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs space-y-2">
+                  <span className="text-[10px] text-indigo-700 font-bold uppercase tracking-wider block">Custo Mão de Obra Real</span>
+                  <strong className="text-xl font-black text-indigo-950 block">{formatCurrency(kpis.totalLaborCostReal)}</strong>
+                  <p className="text-[11px] text-slate-400">Rateio automático diário via Diário de Obra</p>
+                </div>
+
+                <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs space-y-2">
+                  <span className="text-[10px] text-emerald-700 font-bold uppercase tracking-wider block">Margem Bruta Direta</span>
+                  <div className="flex items-baseline gap-2">
+                    <strong className={`text-xl font-black ${kpis.grossMargin >= 0 ? 'text-emerald-900' : 'text-rose-700'}`}>
+                      {formatCurrency(kpis.grossMargin)}
+                    </strong>
+                    <span className={`text-xs font-black ${kpis.grossMargin >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                      ({kpis.grossMarginPercent}%)
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-400">Saldo disponível após deduzir custos da equipe</p>
+                </div>
+              </div>
+
+              {/* Tabela de Custos por Colaborador */}
+              <div className="bg-white border border-slate-200 rounded-2xl shadow-2xs overflow-hidden">
+                <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Custo Absorvido por Colaborador</h4>
+                    <p className="text-[11px] text-slate-400 mt-0.5">Valores rateados com base nos apontamentos do diário de obra</p>
+                  </div>
+                  <span className="text-xs font-bold text-slate-500 bg-slate-100 px-2.5 py-1 rounded-lg">
+                    {laborCostByWorker.length} colaboradores
+                  </span>
+                </div>
+
+                {laborCostByWorker.length === 0 ? (
+                  <div className="p-12 text-center text-xs text-slate-400">
+                    Nenhum custo de mão de obra apontado ainda pelo Diário de Obra.
+                  </div>
+                ) : (
+                  <table className="w-full text-left text-xs text-slate-600">
+                    <thead className="bg-slate-50 text-[11px] font-bold text-slate-700 uppercase border-b border-slate-200">
+                      <tr>
+                        <th className="py-2.5 px-4">Colaborador</th>
+                        <th className="py-2.5 px-4 text-center">Atividades Atuadas</th>
+                        <th className="py-2.5 px-4 text-right">Custo Total Absorvido</th>
+                        <th className="py-2.5 px-4 text-right">% do Custo Total</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 font-medium">
+                      {laborCostByWorker.map(item => {
+                        const pct = kpis.totalLaborCostReal > 0 ? Math.round((item.totalCost / kpis.totalLaborCostReal) * 100) : 0;
+                        return (
+                          <tr key={item.name} className="hover:bg-slate-50/70">
+                            <td className="py-3 px-4 font-bold text-slate-900">{item.name}</td>
+                            <td className="py-3 px-4 text-center font-mono font-bold text-sky-700">{item.tasksCount}</td>
+                            <td className="py-3 px-4 text-right font-mono font-black text-slate-900">{formatCurrency(item.totalCost)}</td>
+                            <td className="py-3 px-4 text-right font-mono font-bold text-slate-500">{pct}%</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
       {/* MODAL: CRIAR NOVO BOLETIM */}
       {isCreateBmModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-2xs animate-in fade-in duration-150">
@@ -1018,7 +1199,7 @@ export const WorkFinancialTab: React.FC<WorkFinancialTabProps> = ({
                 </div>
               </div>
 
-              {/* LISTAGEM DE APONTAMENTOS */}
+              {/* LISTAGEM DE APONTAMENTOS PENDENTES */}
               <div className="flex-1 min-h-0 flex flex-col border border-slate-200 rounded-2xl p-3 bg-slate-50/50">
                 {measurementType === 'por_subitem' ? (
                   <>

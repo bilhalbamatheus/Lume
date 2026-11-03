@@ -85,7 +85,7 @@ export interface RoleDefinition {
 export interface PermissionDefinition {
   id: string;
   label: string;
-  category: 'Contatos' | 'Oportunidades' | 'Obras' | 'RH & Pessoas' | 'Gestão da Empresa';
+  category: 'Contatos' | 'Oportunidades' | 'Obras' | 'Almoxarifado' | 'RH & Pessoas' | 'Gestão da Empresa';
   dependsOn?: string;
 }
 
@@ -116,22 +116,31 @@ const AVAILABLE_PERMISSIONS: PermissionDefinition[] = [
   { id: 'work_financial_view', label: '8. Visualizar e operar o financeiro (ver valores em R$, emitir medições e faturas)', category: 'Obras', dependsOn: 'works_view' },
   { id: 'works_view_daily_logs', label: '9. Visualizar diário de obra e rendimento da equipe', category: 'Obras', dependsOn: 'works_view' },
 
-  // --- 4. MÓDULO: RH & PESSOAS ---
+  // --- 4. MÓDULO: ALMOXARIFADO & ESTOQUE ---
+  { id: 'inventory_request', label: 'Fazer solicitações de materiais e EPIs', category: 'Almoxarifado' },
+  { id: 'inventory_view', label: 'Acessar painel do almoxarifado e catálogo de estoque', category: 'Almoxarifado' },
+  { id: 'inventory_manage_items', label: 'Cadastrar e editar itens do catálogo de estoque', category: 'Almoxarifado', dependsOn: 'inventory_view' },
+  { id: 'inventory_move', label: 'Movimentar estoque (entradas por compra/NF, baixas e devoluções)', category: 'Almoxarifado', dependsOn: 'inventory_view' },
+  { id: 'inventory_fulfill', label: 'Atender e recusar solicitações de materiais da fila', category: 'Almoxarifado', dependsOn: 'inventory_view' },
+  { id: 'inventory_costs_view', label: 'Visualizar custos unitários e valor total em estoque (R$)', category: 'Almoxarifado', dependsOn: 'inventory_view' },
+
+  // --- 5. MÓDULO: RH & PESSOAS ---
   { id: 'hr_view', label: 'Acessar painel e listagem do RH & Colaboradores', category: 'RH & Pessoas' },
   { id: 'hr_employees_manage', label: 'Cadastrar e editar fichas de colaboradores', category: 'RH & Pessoas', dependsOn: 'hr_view' },
   { id: 'hr_salaries_manage', label: 'Visualizar e gerenciar salários, custos e benefícios', category: 'RH & Pessoas', dependsOn: 'hr_view' },
   { id: 'hr_admissions_leaves', label: 'Gerenciar admissões, desligamentos e afastamentos', category: 'RH & Pessoas', dependsOn: 'hr_view' },
 
-  // --- 5. MÓDULO: GESTÃO DA EMPRESA ---
+  // --- 6. MÓDULO: GESTÃO DA EMPRESA ---
   { id: 'company_settings', label: 'Alterar dados fiscais, logotipo e endereço', category: 'Gestão da Empresa' },
   { id: 'team_manage', label: 'Gerenciar equipe, setores e cargos', category: 'Gestão da Empresa' },
   { id: 'custom_fields_manage', label: 'Personalizar funil, serviços e catálogo de itens', category: 'Gestão da Empresa' },
 ];
 
-const CATEGORIES: ('Contatos' | 'Oportunidades' | 'Obras' | 'RH & Pessoas' | 'Gestão da Empresa')[] = [
+const CATEGORIES: ('Contatos' | 'Oportunidades' | 'Obras' | 'Almoxarifado' | 'RH & Pessoas' | 'Gestão da Empresa')[] = [
   'Contatos',
   'Oportunidades',
   'Obras',
+  'Almoxarifado',
   'RH & Pessoas',
   'Gestão da Empresa'
 ];
@@ -655,7 +664,7 @@ export const OrganizationSettingsModal: React.FC<OrganizationSettingsModalProps>
     });
   };
 
-  const handleToggleCategory = (category: 'Contatos' | 'Oportunidades' | 'Obras' | 'RH & Pessoas' | 'Gestão da Empresa') => {
+  const handleToggleCategory = (category: 'Contatos' | 'Oportunidades' | 'Obras' | 'Almoxarifado' | 'RH & Pessoas' | 'Gestão da Empresa') => {
     if (!isEditMode) return;
     const catPermIds = AVAILABLE_PERMISSIONS.filter(p => p.category === category).map(p => p.id);
     const allChecked = catPermIds.every(id => roleFormPermissions.includes(id));

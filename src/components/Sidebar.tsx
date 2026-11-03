@@ -8,6 +8,7 @@ import {
   Kanban,
   HardHat,
   UserCheck,
+  Boxes,
   Settings,
   LogOut,
   ChevronLeft,
@@ -45,6 +46,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const canSeePipeline = isMaster || Boolean(permissions?.canViewPipeline);
   const canSeeWorks = isMaster || Boolean(permissions?.canViewWorks);
   const canSeeHR = isMaster || Boolean(permissions?.canViewHR);
+  const canSeeInventory = isMaster || Boolean(permissions?.canViewInventory);
 
   const canAccessSettings =
     isMaster ||
@@ -52,13 +54,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
     Boolean(permissions?.canManageTeam) ||
     Boolean(permissions?.canCustomizeSystem);
 
-  // Lista com RH & Pessoas incluído e condicionado
+  // Lista de itens do menu
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, visible: true },
     { id: 'contacts', label: 'Contatos', icon: Users, visible: canSeeContacts },
     { id: 'opportunities', label: 'Oportunidades', icon: Kanban, visible: canSeePipeline },
     { id: 'works', label: 'Obras', icon: HardHat, visible: canSeeWorks },
     { id: 'hr', label: 'RH', icon: UserCheck, visible: canSeeHR },
+    { id: 'inventory', label: 'Almoxarifado', icon: Boxes, visible: canSeeInventory },
     { id: 'activities', label: 'Atividades', icon: CheckSquare, visible: true },
   ].filter((item) => item.visible);
 

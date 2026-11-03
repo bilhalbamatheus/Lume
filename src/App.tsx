@@ -1,4 +1,5 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { AcceptInviteScreen } from './components/AcceptInviteScreen';
 import { supabase } from './lib/supabase';
 import { useAuth } from './contexts/AuthContext';
@@ -17,13 +18,27 @@ import { ActivitiesView } from './components/ActivitiesView';
 import { DashboardView } from './components/DashboardView';
 import { OpportunityDetailModal } from './components/OpportunityDetailModal';
 import { ContactProfileModal } from './components/ContactProfileModal';
+import { CreateOpportunityModal } from './components/CreateOpportunityModal';
 import { WorksView } from './components/WorksView';
 import { HRView } from './components/HRView';
+import { InventoryView } from './components/InventoryView';
+import { RequestMaterialsModal } from './components/RequestMaterialsModal';
+import { DailyWorkLogModal } from './components/DailyWorkLogModal';
 
 import {
   Sparkles,
   ArrowRight,
-  X
+  X,
+  PackageOpen,
+  BookOpenCheck,
+  Plus,
+  UserPlus,
+  Clock,
+  TrendingUp,
+  FileUp,
+  Boxes,
+  ArrowUpRight,
+  Printer
 } from 'lucide-react';
 
 export default function App() {
@@ -45,6 +60,83 @@ export default function App() {
 
   const [selectedContactModalId, setSelectedContactModalId] = useState<string | null>(null);
   const [isContactProfileModalOpen, setIsContactProfileModalOpen] = useState(false);
+
+  // Gatilhos de Ações de Contatos pelo FAB
+  const [triggerContactInteraction, setTriggerContactInteraction] = useState(false);
+  const [triggerContactAttach, setTriggerContactAttach] = useState(false);
+  const [isCreateOppFromContactOpen, setIsCreateOppFromContactOpen] = useState(false);
+
+  // Gatilho de Nova Oportunidade no Funil (DealsPage) pelo FAB Mobile
+  const [triggerCreateOpportunity, setTriggerCreateOpportunity] = useState(false);
+
+  // Gatilho de Cadastro de Colaborador no RH (HRView) pelo FAB Mobile
+  const [triggerCreateEmployee, setTriggerCreateEmployee] = useState(false);
+
+  // Gatilhos de Ações de Almoxarifado / Estoque (InventoryView) pelo FAB Mobile
+  const [triggerCreateInventoryItem, setTriggerCreateInventoryItem] = useState(false);
+  const [triggerInventoryMovement, setTriggerInventoryMovement] = useState(false);
+  const [triggerPrintInventoryStock, setTriggerPrintInventoryStock] = useState(false);
+
+  // Modais Globais de Ação Rápida
+  const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
+  const [isDailyLogModalOpen, setIsDailyLogModalOpen] = useState(false);
+
+  // Menu Popover / Action Sheet do Botão Flutuante (FAB)
+  const [isFabMenuOpen, setIsFabMenuOpen] = useState(false);
+  const fabContainerRef = useRef<HTMLDivElement>(null);
+
+  // Detector de modais secundários/internos abertos via DOM
+  const [hasDomModalOpen, setHasDomModalOpen] = useState(false);
+
+  useEffect(() => {
+    const checkModals = () => {
+      // Procura elementos de backdrop típicos de modais abertos internamente nas telas
+      const modalElements = document.querySelectorAll(
+        '.fixed.inset-0.bg-slate-950\\/75, .fixed.inset-0.bg-slate-950\\/70, .fixed.inset-0.bg-slate-950\\/60, .fixed.inset-0.bg-slate-950\\/80'
+      );
+      // Filtra o próprio Action Sheet do FAB
+      const activeAppModals = Array.from(modalElements).filter(
+        el => !el.classList.contains('z-[99998]') && !el.classList.contains('z-[99999]')
+      );
+      setHasDomModalOpen(activeAppModals.length > 0);
+    };
+
+    const observer = new MutationObserver(checkModals);
+    observer.observe(document.body, { childList: true, subtree: true });
+    checkModals();
+
+    return () => observer.disconnect();
+  }, []);
+
+  // Define se qualquer modal de cadastro/edição está ativo na tela
+  const isAnyModalOpen = Boolean(
+    isModalOpen ||
+    isDailyLogModalOpen ||
+    isRequestModalOpen ||
+    isCreateOppFromContactOpen ||
+    isDashboardOppModalOpen ||
+    triggerCreateOpportunity ||
+    triggerCreateEmployee ||
+    triggerCreateInventoryItem ||
+    triggerInventoryMovement ||
+    triggerPrintInventoryStock ||
+    hasDomModalOpen
+  );
+
+  // Fecha o popover ao clicar fora no Desktop
+  useEffect(() => {
+    const handleGlobalClick = (e: MouseEvent) => {
+      if (
+        isFabMenuOpen &&
+        fabContainerRef.current &&
+        !fabContainerRef.current.contains(e.target as Node)
+      ) {
+        setIsFabMenuOpen(false);
+      }
+    };
+    window.addEventListener('click', handleGlobalClick);
+    return () => window.removeEventListener('click', handleGlobalClick);
+  }, [isFabMenuOpen]);
 
   const canAccessSettings = useMemo(() => {
     return (
@@ -70,7 +162,6 @@ export default function App() {
     );
   }
 
-  // Trava de rotas segura e estável para todos os módulos
   useEffect(() => {
     if (permsLoading || !permissions) return;
 
@@ -84,10 +175,13 @@ export default function App() {
       setCurrentTab('dashboard');
     } else if (currentTab === 'hr' && !isMaster && !permissions.canViewHR) {
       setCurrentTab('dashboard');
+    } else if (currentTab === 'inventory' && !isMaster && !permissions.canViewInventory) {
+      setCurrentTab('dashboard');
     }
   }, [currentTab, permissions, permsLoading, isAdmin]);
 
-  const userId = user?.id;
+  const userId = (user as any)?.id || (user as any)?.profile?.id;
+  const userEmail = (user as any)?.email || (user as any)?.profile?.email || '';
 
   useEffect(() => {
     async function checkAdminStatus() {
@@ -106,11 +200,11 @@ export default function App() {
           .eq('id', userId)
           .maybeSingle();
 
-        if (profile?.company_id) {
+        if ((profile as any)?.company_id) {
           const { data: company } = await supabase
             .from('companies')
             .select('id, created_by')
-            .eq('id', profile.company_id)
+            .eq('id', (profile as any).company_id)
             .maybeSingle();
 
           if (company && (company.created_by === userId || !company.created_by)) {
@@ -160,6 +254,9 @@ export default function App() {
     setCurrentTab(tab);
   };
 
+  const isMaster = Boolean(isAdmin || permissions?.isOwnerOrAdmin);
+  const canRequestMaterial = isMaster || Boolean(permissions?.canRequestMaterials);
+
   if (authLoading || permsLoading) {
     return (
       <div className="fixed inset-0 min-h-screen w-full bg-[#070f1e] flex flex-col items-center justify-center z-[9999] p-4 select-none overflow-hidden">
@@ -203,7 +300,7 @@ export default function App() {
   }
 
   return (
-    <div className="flex bg-slate-50 h-screen w-screen overflow-hidden text-slate-800">
+    <div className="flex bg-slate-50 h-screen w-screen overflow-hidden text-slate-800 relative">
       <Sidebar 
         currentTab={currentTab} 
         setCurrentTab={(tab) => {
@@ -240,13 +337,13 @@ export default function App() {
           isAdmin={canAccessSettings}
           companyName={user.company?.name || 'Empresa'}
           companyLogoUrl={user.company?.logo_url || null}
-          userName={user.profile?.full_name || 'Utilizador'}
-          userEmail={user.email}
-          userAvatarUrl={user.profile?.avatar_url || null}
+          userName={(user as any)?.profile?.full_name || 'Utilizador'}
+          userEmail={userEmail}
+          userAvatarUrl={(user as any)?.profile?.avatar_url || null}
           onSignOut={signOut}
         />
 
-        <main className="flex-1 min-h-0 min-w-0 overflow-hidden flex flex-col">
+        <main className="flex-1 min-h-0 min-w-0 overflow-hidden flex flex-col relative">
           {currentTab === 'dashboard' ? (
             <div className="flex-1 min-h-0 min-w-0 overflow-y-auto">
               <DashboardView
@@ -268,50 +365,14 @@ export default function App() {
           ) : currentTab === 'profile' ? (
             <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full">
               <UserProfileView 
-                userId={user.id}
-                userEmail={user.email}
-                initialName={user.profile?.full_name || 'Utilizador'}
+                userId={userId}
+                userEmail={userEmail}
+                initialName={(user as any)?.profile?.full_name || 'Utilizador'}
                 onProfileUpdated={() => {}} 
               />
             </div>
           ) : currentTab === 'contacts' ? (
             <div className="h-full w-full p-4 sm:p-6 lg:p-8 flex flex-col min-w-0 overflow-hidden box-border">
-              {showProfileBanner && (
-                <div className="mb-3 bg-gradient-to-r from-sky-50 via-blue-50 to-indigo-50 border border-sky-200/80 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-2xs shrink-0">
-                  <div className="flex items-center gap-3">
-                    <div className="h-9 w-9 rounded-xl bg-sky-500/10 text-sky-600 flex items-center justify-center shrink-0">
-                      <Sparkles size={18} />
-                    </div>
-                    <div>
-                      <p className="text-xs sm:text-sm font-semibold text-slate-900">
-                        Deseja completar o seu perfil profissional?
-                      </p>
-                      <p className="text-[11px] sm:text-xs text-slate-500">
-                        Adicione o seu contacto e fotografia de perfil para personalizar as suas propostas no Lume.
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2 self-end sm:self-auto">
-                    <button
-                      type="button"
-                      onClick={() => setCurrentTab('profile')}
-                      className="text-xs bg-sky-600 hover:bg-sky-500 text-white font-medium px-3.5 py-1.5 rounded-lg shadow-2xs transition-colors flex items-center gap-1.5 cursor-pointer"
-                    >
-                      Completar Perfil
-                      <ArrowRight size={13} />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setShowProfileBanner(false)}
-                      title="Dispensar aviso"
-                      className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-200/50 transition-colors cursor-pointer"
-                    >
-                      <X size={15} />
-                    </button>
-                  </div>
-                </div>
-              )}
 
               <ContactsView 
                 key={contactsRefreshKey}
@@ -321,7 +382,14 @@ export default function App() {
             </div>
           ) : currentTab === 'opportunities' ? (
             <div className="flex-1 min-h-0 min-w-0 overflow-hidden flex flex-col">
-              <DealsPage initialFilters={tabFilterOptions} permissions={permissions} />
+              <DealsPage 
+                {...({
+                  initialFilters: tabFilterOptions,
+                  permissions: permissions,
+                  triggerCreateOpportunity: triggerCreateOpportunity,
+                  onResetTrigger: () => setTriggerCreateOpportunity(false)
+                } as any)}
+              />
             </div>
           ) : currentTab === 'works' ? (
             <div className="flex-1 min-h-0 min-w-0 overflow-hidden flex flex-col">
@@ -337,7 +405,24 @@ export default function App() {
             </div>
           ) : currentTab === 'hr' ? (
             <div className="flex-1 min-h-0 min-w-0 overflow-hidden flex flex-col">
-              <HRView permissions={permissions} />
+              <HRView 
+                permissions={permissions} 
+                triggerCreateEmployee={triggerCreateEmployee}
+                onResetTrigger={() => setTriggerCreateEmployee(false)}
+              />
+            </div>
+          ) : currentTab === 'inventory' ? (
+            <div className="flex-1 min-h-0 min-w-0 overflow-hidden flex flex-col">
+              <InventoryView 
+                triggerCreateItem={triggerCreateInventoryItem}
+                triggerMovement={triggerInventoryMovement}
+                triggerPrintStock={triggerPrintInventoryStock}
+                onResetTrigger={() => {
+                  setTriggerCreateInventoryItem(false);
+                  setTriggerInventoryMovement(false);
+                  setTriggerPrintInventoryStock(false);
+                }}
+              />
             </div>
           ) : currentTab === 'activities' ? (
             <div className="flex-1 min-h-0 min-w-0 overflow-y-auto flex flex-col">
@@ -354,12 +439,369 @@ export default function App() {
         </main>
       </div>
 
+      {/* ========================================================================= */}
+      {/* BOTÃO FLUTUANTE (FAB) + ACTION SHEET VIA PORTAL (OCULTO EM QUALQUER MODAL)*/}
+      {/* ========================================================================= */}
+      {!isAnyModalOpen && typeof document !== 'undefined' && createPortal(
+        <div ref={fabContainerRef}>
+          {/* BOTÃO GATILHO */}
+          <div className="fixed bottom-6 right-6 z-[99999] pointer-events-auto">
+            {/* Popover no Desktop */}
+            {isFabMenuOpen && (
+              <div 
+                onClick={(e) => e.stopPropagation()}
+                className="hidden md:flex flex-col absolute bottom-full right-0 mb-3 w-64 bg-white border border-slate-200 rounded-2xl shadow-2xl p-2 space-y-1 animate-in fade-in slide-in-from-bottom-3 duration-150"
+              >
+                <div className="px-3 py-1.5 border-b border-slate-100">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                    Ações Rápidas
+                  </span>
+                </div>
+
+                {/* Diário de Obra */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsFabMenuOpen(false);
+                    setIsDailyLogModalOpen(true);
+                  }}
+                  className="w-full p-2.5 rounded-xl text-left hover:bg-sky-50/80 transition-colors flex items-center gap-3 cursor-pointer group"
+                >
+                  <div className="w-9 h-9 rounded-xl bg-sky-100 text-sky-700 flex items-center justify-center shrink-0 group-hover:bg-sky-600 group-hover:text-white transition-colors">
+                    <BookOpenCheck size={18} />
+                  </div>
+                  <div>
+                    <strong className="text-xs font-bold text-slate-900 block group-hover:text-sky-900">
+                      Diário de Obra
+                    </strong>
+                    <span className="text-[10px] text-slate-500 block">
+                      Apontar atividades e avanço físico
+                    </span>
+                  </div>
+                </button>
+
+                {/* Solicitar Material / EPI (Condicionado à Permissão) */}
+                {canRequestMaterial && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsFabMenuOpen(false);
+                      setIsRequestModalOpen(true);
+                    }}
+                    className="w-full p-2.5 rounded-xl text-left hover:bg-amber-50/80 transition-colors flex items-center gap-3 cursor-pointer group"
+                  >
+                    <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0 group-hover:bg-amber-600 group-hover:text-white transition-colors">
+                      <PackageOpen size={18} />
+                    </div>
+                    <div>
+                      <strong className="text-xs font-bold text-slate-900 block group-hover:text-amber-900">
+                        Solicitar Material / EPI
+                      </strong>
+                      <span className="text-[10px] text-slate-500 block">
+                        Pedir itens ou reposição de EPI
+                      </span>
+                    </div>
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* O Botão Físico */}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsFabMenuOpen(prev => !prev);
+              }}
+              className={`w-14 h-14 md:w-auto md:h-auto flex items-center justify-center gap-2 md:px-4 md:py-3 text-white rounded-full md:rounded-2xl shadow-xl hover:shadow-2xl transition-all duration-200 cursor-pointer active:scale-95 group border border-sky-400/30 ${
+                isFabMenuOpen ? 'bg-slate-900 hover:bg-slate-800' : 'bg-sky-600 hover:bg-sky-500'
+              }`}
+              title="Ações Rápidas"
+            >
+              <div className={`transition-transform duration-200 ${isFabMenuOpen ? 'rotate-45' : 'rotate-0'}`}>
+                <Plus size={26} strokeWidth={2.5} />
+              </div>
+              <span className="hidden md:inline font-bold text-xs tracking-wide">
+                {isFabMenuOpen ? 'Fechar' : 'Ações Rápidas'}
+              </span>
+            </button>
+          </div>
+
+          {/* ACTION SHEET MOBILE EM TELA CHEIA */}
+          {isFabMenuOpen && (
+            <div 
+              className="md:hidden fixed inset-0 z-[99998] flex flex-col justify-end bg-slate-950/70 backdrop-blur-xs animate-in fade-in duration-150 pointer-events-auto"
+              onClick={() => setIsFabMenuOpen(false)}
+            >
+              <div 
+                className="relative bg-white rounded-t-3xl p-5 space-y-3 animate-in slide-in-from-bottom duration-200 border-t border-slate-200 shadow-2xl"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="w-12 h-1.5 bg-slate-200 rounded-full mx-auto mb-2" />
+
+                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider text-center">
+                  {isContactProfileModalOpen ? 'Adicionar ao Contato' : 'Ações Rápidas'}
+                </h3>
+
+                <div className="space-y-2 pt-1 max-h-[60vh] overflow-y-auto">
+                  {isContactProfileModalOpen ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsFabMenuOpen(false);
+                          setTriggerContactInteraction(true);
+                        }}
+                        className="w-full p-3 bg-slate-50 hover:bg-slate-100 rounded-2xl flex items-center gap-3 text-slate-800 font-semibold text-xs transition-colors cursor-pointer active:scale-98"
+                      >
+                        <div className="w-10 h-10 rounded-xl bg-sky-100 text-sky-700 flex items-center justify-center shrink-0">
+                          <Clock size={19} />
+                        </div>
+                        <div className="text-left flex-1 min-w-0">
+                          <p className="text-sm font-bold text-slate-900 truncate">Registrar Interação / Tarefa</p>
+                          <p className="text-[11px] text-slate-500 font-normal truncate">
+                            Adicione notas, reuniões ou ligações
+                          </p>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsFabMenuOpen(false);
+                          setIsCreateOppFromContactOpen(true);
+                        }}
+                        className="w-full p-3 bg-slate-50 hover:bg-slate-100 rounded-2xl flex items-center gap-3 text-slate-800 font-semibold text-xs transition-colors cursor-pointer active:scale-98"
+                      >
+                        <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
+                          <TrendingUp size={19} />
+                        </div>
+                        <div className="text-left flex-1 min-w-0">
+                          <p className="text-sm font-bold text-slate-900 truncate">Nova Oportunidade</p>
+                          <p className="text-[11px] text-slate-500 font-normal truncate">
+                            Criar negociação no funil comercial
+                          </p>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsFabMenuOpen(false);
+                          setTriggerContactAttach(true);
+                        }}
+                        className="w-full p-3 bg-slate-50 hover:bg-slate-100 rounded-2xl flex items-center gap-3 text-slate-800 font-semibold text-xs transition-colors cursor-pointer active:scale-98"
+                      >
+                        <div className="w-10 h-10 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center shrink-0">
+                          <FileUp size={19} />
+                        </div>
+                        <div className="text-left flex-1 min-w-0">
+                          <p className="text-sm font-bold text-slate-900 truncate">Anexar Documento</p>
+                          <p className="text-[11px] text-slate-500 font-normal truncate">
+                            Upload de arquivos ou contratos
+                          </p>
+                        </div>
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      {currentTab === 'contacts' && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsFabMenuOpen(false);
+                            setIsModalOpen(true);
+                          }}
+                          className="w-full p-3 bg-slate-50 hover:bg-slate-100 rounded-2xl flex items-center gap-3 text-slate-800 font-semibold text-xs transition-colors cursor-pointer active:scale-98"
+                        >
+                          <div className="w-10 h-10 rounded-xl bg-sky-100 text-sky-700 flex items-center justify-center shrink-0">
+                            <UserPlus size={19} />
+                          </div>
+                          <div className="text-left flex-1 min-w-0">
+                            <p className="text-sm font-bold text-slate-900 truncate">Novo Contato</p>
+                            <p className="text-[11px] text-slate-500 font-normal truncate">
+                              Cadastrar cliente ou fornecedor
+                            </p>
+                          </div>
+                        </button>
+                      )}
+
+                      {currentTab === 'opportunities' && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsFabMenuOpen(false);
+                            setTriggerCreateOpportunity(true);
+                          }}
+                          className="w-full p-3 bg-slate-50 hover:bg-slate-100 rounded-2xl flex items-center gap-3 text-slate-800 font-semibold text-xs transition-colors cursor-pointer active:scale-98"
+                        >
+                          <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
+                            <TrendingUp size={19} />
+                          </div>
+                          <div className="text-left flex-1 min-w-0">
+                            <p className="text-sm font-bold text-slate-900 truncate">Nova Oportunidade</p>
+                            <p className="text-[11px] text-slate-500 font-normal truncate">
+                              Criar negociação no funil comercial
+                            </p>
+                          </div>
+                        </button>
+                      )}
+
+                      {currentTab === 'hr' && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsFabMenuOpen(false);
+                            setTriggerCreateEmployee(true);
+                          }}
+                          className="w-full p-3 bg-slate-50 hover:bg-slate-100 rounded-2xl flex items-center gap-3 text-slate-800 font-semibold text-xs transition-colors cursor-pointer active:scale-98"
+                        >
+                          <div className="w-10 h-10 rounded-xl bg-sky-100 text-sky-700 flex items-center justify-center shrink-0">
+                            <UserPlus size={19} />
+                          </div>
+                          <div className="text-left flex-1 min-w-0">
+                            <p className="text-sm font-bold text-slate-900 truncate">Cadastrar Colaborador</p>
+                            <p className="text-[11px] text-slate-500 font-normal truncate">
+                              Registrar funcionário no quadro da empresa
+                            </p>
+                          </div>
+                        </button>
+                      )}
+
+                      {currentTab === 'inventory' && (
+                        <>
+                          {(isMaster || permissions?.canManageInventoryItems) && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsFabMenuOpen(false);
+                                setTriggerCreateInventoryItem(true);
+                              }}
+                              className="w-full p-3 bg-slate-50 hover:bg-slate-100 rounded-2xl flex items-center gap-3 text-slate-800 font-semibold text-xs transition-colors cursor-pointer active:scale-98"
+                            >
+                              <div className="w-10 h-10 rounded-xl bg-sky-100 text-sky-700 flex items-center justify-center shrink-0">
+                                <Boxes size={19} />
+                              </div>
+                              <div className="text-left flex-1 min-w-0">
+                                <p className="text-sm font-bold text-slate-900 truncate">Cadastrar Item</p>
+                                <p className="text-[11px] text-slate-500 font-normal truncate">
+                                  Adicionar novo material, EPI ou ferramenta ao estoque
+                                </p>
+                              </div>
+                            </button>
+                          )}
+
+                          {(isMaster || permissions?.canManageInventoryMovements) && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsFabMenuOpen(false);
+                                setTriggerInventoryMovement(true);
+                              }}
+                              className="w-full p-3 bg-slate-50 hover:bg-slate-100 rounded-2xl flex items-center gap-3 text-slate-800 font-semibold text-xs transition-colors cursor-pointer active:scale-98"
+                            >
+                              <div className="w-10 h-10 rounded-xl bg-slate-200 text-slate-800 flex items-center justify-center shrink-0">
+                                <ArrowUpRight size={19} />
+                              </div>
+                              <div className="text-left flex-1 min-w-0">
+                                <p className="text-sm font-bold text-slate-900 truncate">Movimentar Estoque</p>
+                                <p className="text-[11px] text-slate-500 font-normal truncate">
+                                  Lançar entrada com NF, cautela ou saída para obra
+                                </p>
+                              </div>
+                            </button>
+                          )}
+
+                          {(isMaster || permissions?.canViewInventory) && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsFabMenuOpen(false);
+                                setTriggerPrintInventoryStock(true);
+                              }}
+                              className="w-full p-3 bg-slate-50 hover:bg-slate-100 rounded-2xl flex items-center gap-3 text-slate-800 font-semibold text-xs transition-colors cursor-pointer active:scale-98"
+                            >
+                              <div className="w-10 h-10 rounded-xl bg-slate-100 text-slate-600 flex items-center justify-center shrink-0">
+                                <Printer size={19} />
+                              </div>
+                              <div className="text-left flex-1 min-w-0">
+                                <p className="text-sm font-bold text-slate-900 truncate">Imprimir Estoque</p>
+                                <p className="text-[11px] text-slate-500 font-normal truncate">
+                                  Gerar folha timbrada para conferência física
+                                </p>
+                              </div>
+                            </button>
+                          )}
+                        </>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsFabMenuOpen(false);
+                          setIsDailyLogModalOpen(true);
+                        }}
+                        className="w-full p-3 bg-slate-50 hover:bg-slate-100 rounded-2xl flex items-center gap-3 text-slate-800 font-semibold text-xs transition-colors cursor-pointer active:scale-98"
+                      >
+                        <div className="w-10 h-10 rounded-xl bg-sky-100 text-sky-700 flex items-center justify-center shrink-0">
+                          <BookOpenCheck size={19} />
+                        </div>
+                        <div className="text-left flex-1 min-w-0">
+                          <p className="text-sm font-bold text-slate-900 truncate">Diário de Obra</p>
+                          <p className="text-[11px] text-slate-500 font-normal truncate">
+                            Apontar serviços e avanço físico
+                          </p>
+                        </div>
+                      </button>
+
+                      {canRequestMaterial && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsFabMenuOpen(false);
+                            setIsRequestModalOpen(true);
+                          }}
+                          className="w-full p-3 bg-slate-50 hover:bg-slate-100 rounded-2xl flex items-center gap-3 text-slate-800 font-semibold text-xs transition-colors cursor-pointer active:scale-98"
+                        >
+                          <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+                            <PackageOpen size={19} />
+                          </div>
+                          <div className="text-left flex-1 min-w-0">
+                            <p className="text-sm font-bold text-slate-900 truncate">Solicitar Material / EPI</p>
+                            <p className="text-[11px] text-slate-500 font-normal truncate">
+                              Pedir reposição ou insumos para obra
+                            </p>
+                          </div>
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
+
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsFabMenuOpen(false)}
+                    className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-xl cursor-pointer transition"
+                  >
+                    Fechar
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>,
+        document.body
+      )}
+
+      {/* MODAL DE CRIAÇÃO DE CONTATO */}
       <CreateContactModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
         onSuccess={() => setContactsRefreshKey(prev => prev + 1)}
       />
 
+      {/* MODAL DE OPORTUNIDADE DASHBOARD */}
       {isDashboardOppModalOpen && selectedDashboardOppId && (
         <OpportunityDetailModal
           opportunityId={selectedDashboardOppId}
@@ -373,6 +815,7 @@ export default function App() {
         />
       )}
 
+      {/* MODAL DE DETALHES DO CONTATO */}
       {isContactProfileModalOpen && selectedContactModalId && (
         <ContactProfileModal
           contactId={selectedContactModalId}
@@ -385,7 +828,45 @@ export default function App() {
             setSelectedDashboardOppId(oppId);
             setIsDashboardOppModalOpen(true);
           }}
+          onCreateOpportunityForContact={() => {
+            setIsCreateOppFromContactOpen(true);
+          }}
+          triggerInteraction={triggerContactInteraction}
+          triggerAttach={triggerContactAttach}
+          onResetTrigger={() => {
+            setTriggerContactInteraction(false);
+            setTriggerContactAttach(false);
+          }}
           onContactUpdated={() => setContactsRefreshKey(prev => prev + 1)}
+        />
+      )}
+
+      {/* MODAL DE NOVA OPORTUNIDADE VINCULADA AO CONTATO */}
+      {isCreateOppFromContactOpen && selectedContactModalId && (
+        <CreateOpportunityModal
+          isOpen={isCreateOppFromContactOpen}
+          initialContactId={selectedContactModalId}
+          onClose={() => setIsCreateOppFromContactOpen(false)}
+          onSuccess={() => {
+            setIsCreateOppFromContactOpen(false);
+            setContactsRefreshKey(prev => prev + 1);
+          }}
+        />
+      )}
+
+      {/* MODAL GLOBAL DE SOLICITAÇÃO DE MATERIAIS / EPIS */}
+      {isRequestModalOpen && (
+        <RequestMaterialsModal
+          isOpen={isRequestModalOpen}
+          onClose={() => setIsRequestModalOpen(false)}
+        />
+      )}
+
+      {/* MODAL GLOBAL DO DIÁRIO DE OBRA */}
+      {isDailyLogModalOpen && (
+        <DailyWorkLogModal
+          isOpen={isDailyLogModalOpen}
+          onClose={() => setIsDailyLogModalOpen(false)}
         />
       )}
     </div>

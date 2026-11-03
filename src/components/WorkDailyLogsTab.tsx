@@ -13,7 +13,8 @@ import {
   Users,
   RotateCcw,
   Award,
-  Lock
+  Lock,
+  DollarSign
 } from 'lucide-react';
 
 interface DailyLogEntry {
@@ -24,6 +25,9 @@ interface DailyLogEntry {
   notes?: string | null;
   item_notes?: string | null;
   is_rework?: boolean;
+  labor_cost?: number;
+  workers_count?: number;
+  daily_total_labor_cost?: number;
   created_at: string;
   work_task_id: string;
   work_item_id: string;
@@ -42,6 +46,7 @@ interface DayGroup {
   reworkCount: number;
   uniqueExecutors: string[];
   notes: string[];
+  dayLaborCost: number;
 }
 
 interface WorkerPerformance {
@@ -50,6 +55,7 @@ interface WorkerPerformance {
   completedTasks: number;
   daysActive: number;
   reworkCount: number;
+  totalLaborCostProduced: number;
   entries: DailyLogEntry[];
 }
 
@@ -67,6 +73,10 @@ const getInitials = (name: string) => {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 };
 
+const formatCurrency = (val: number) => {
+  return (val || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+};
+
 export const WorkDailyLogsTab: React.FC<WorkDailyLogsTabProps> = ({
   workId,
   onOpenNewLog
@@ -74,14 +84,13 @@ export const WorkDailyLogsTab: React.FC<WorkDailyLogsTabProps> = ({
   useAuth();
   const { permissions, loading: loadingPerms } = usePermissions();
 
-
   const [loading, setLoading] = useState(true);
   const [entries, setEntries] = useState<DailyLogEntry[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedDay, setSelectedDay] = useState<DayGroup | null>(null);
 
   // Sub-aba interna: 'timeline' (Dia a Dia) ou 'performance' (Rendimento da Equipe)
-  const [subView, setSubView] = useState<'timeline' | 'performance'>('performance');
+  const [subView, setSubView] = useState<'timeline' | 'performance'>('timeline');
 
   // Filtro de Período para Rendimento
   const [periodFilter, setPeriodFilter] = useState<PeriodFilter>('all');
@@ -89,20 +98,26 @@ export const WorkDailyLogsTab: React.FC<WorkDailyLogsTabProps> = ({
   // Colaborador selecionado para ver o histórico detalhado
   const [selectedWorkerDetails, setSelectedWorkerDetails] = useState<WorkerPerformance | null>(null);
 
-  // -------------------------------------------------------------
-  // REGRAS DAS PERMISSÕES SIMPLIFICADAS
-  // -------------------------------------------------------------
-  // Permissão 9: Visualizar diário de obra e rendimento da equipe
+  // Permissão de Visualização dos Diários
   const canViewDailyLogs = Boolean(
     permissions.isOwnerOrAdmin ||
     permissions.canViewDailyLogs
   );
 
-  // Permissão 5: Apontar avanço e dar baixa em tarefas
+  // Permissão de Execução de Tarefas
   const canExecuteTasks = Boolean(
     permissions.isOwnerOrAdmin ||
     permissions.canExecuteWorkTasks ||
     permissions.canCompleteWorkTasks
+  );
+
+  // Permissão para Visualizar Valores Monetários (Financeiro, Comercial, RT, Admin)
+  const canSeeFinancialValues = Boolean(
+    permissions.isOwnerOrAdmin ||
+    permissions.canManageWorkFinancial ||
+    permissions.canViewWorkFinancial ||
+    permissions.canViewWorkPrices ||
+    permissions.canManageSalariesBenefits
   );
 
   const loadEntries = useCallback(async () => {
@@ -149,7 +164,10 @@ export const WorkDailyLogsTab: React.FC<WorkDailyLogsTabProps> = ({
           has_progress_tracking: Boolean(t?.has_progress_tracking),
           item_title: it?.title || 'Componente',
           item_location: it?.location || 'Geral',
-          is_rework: hasReworkTag
+          is_rework: hasReworkTag,
+          labor_cost: Number(e.labor_cost) || 0,
+          workers_count: Number(e.workers_count) || 0,
+          daily_total_labor_cost: Number(e.daily_total_labor_cost) || 0
         };
       });
 
@@ -167,7 +185,6 @@ export const WorkDailyLogsTab: React.FC<WorkDailyLogsTabProps> = ({
     }
   }, [loadEntries, canViewDailyLogs]);
 
-  // Filtragem dos Apontamentos com Base no Período Selecionado
   const periodFilteredEntries = useMemo(() => {
     if (periodFilter === 'all') return entries;
 
@@ -204,7 +221,6 @@ export const WorkDailyLogsTab: React.FC<WorkDailyLogsTabProps> = ({
     return entries;
   }, [entries, periodFilter]);
 
-  // Agrupamento por Dia
   const dayGroups = useMemo(() => {
     const map: Record<string, DailyLogEntry[]> = {};
 
@@ -218,11 +234,13 @@ export const WorkDailyLogsTab: React.FC<WorkDailyLogsTabProps> = ({
       const executorsSet = new Set<string>();
       const notesSet = new Set<string>();
       let reworks = 0;
+      let totalLabor = 0;
 
       dayEntries.forEach(e => {
         (e.executed_by || []).forEach(name => executorsSet.add(name));
         if (e.notes?.trim()) notesSet.add(e.notes.trim());
         if (e.is_rework) reworks += 1;
+        totalLabor += e.labor_cost || 0;
       });
 
       const formatted = date !== 'Data não informada'
@@ -241,12 +259,12 @@ export const WorkDailyLogsTab: React.FC<WorkDailyLogsTabProps> = ({
         totalActivities: dayEntries.length,
         reworkCount: reworks,
         uniqueExecutors: Array.from(executorsSet),
-        notes: Array.from(notesSet)
+        notes: Array.from(notesSet),
+        dayLaborCost: totalLabor
       };
     });
   }, [entries]);
 
-  // Estatísticas de Produtividade dos Funcionários por Período
   const workersPerformance = useMemo(() => {
     const stats: Record<string, WorkerPerformance> = {};
     const datesPerWorker: Record<string, Set<string>> = {};
@@ -254,6 +272,7 @@ export const WorkDailyLogsTab: React.FC<WorkDailyLogsTabProps> = ({
     periodFilteredEntries.forEach(entry => {
       const isComplete = entry.quantity_executed > 0;
       const isRework = Boolean(entry.is_rework);
+      const splitLabor = (entry.labor_cost || 0) / Math.max(1, (entry.executed_by || []).length);
 
       (entry.executed_by || []).forEach(name => {
         const cleanName = name.trim();
@@ -266,6 +285,7 @@ export const WorkDailyLogsTab: React.FC<WorkDailyLogsTabProps> = ({
             completedTasks: 0,
             daysActive: 0,
             reworkCount: 0,
+            totalLaborCostProduced: 0,
             entries: []
           };
           datesPerWorker[cleanName] = new Set();
@@ -273,6 +293,7 @@ export const WorkDailyLogsTab: React.FC<WorkDailyLogsTabProps> = ({
 
         stats[cleanName].totalEntries += 1;
         stats[cleanName].entries.push(entry);
+        stats[cleanName].totalLaborCostProduced += splitLabor;
         if (isComplete) stats[cleanName].completedTasks += 1;
         if (isRework) stats[cleanName].reworkCount += 1;
         if (entry.entry_date) datesPerWorker[cleanName].add(entry.entry_date);
@@ -286,7 +307,6 @@ export const WorkDailyLogsTab: React.FC<WorkDailyLogsTabProps> = ({
     return Object.values(stats).sort((a, b) => b.totalEntries - a.totalEntries);
   }, [periodFilteredEntries]);
 
-  // Filtro de Busca
   const filteredGroups = useMemo(() => {
     if (!searchTerm.trim()) return dayGroups;
     const q = searchTerm.toLowerCase();
@@ -304,6 +324,10 @@ export const WorkDailyLogsTab: React.FC<WorkDailyLogsTabProps> = ({
 
   const totalReworksGlobal = useMemo(() => {
     return entries.filter(e => e.is_rework).length;
+  }, [entries]);
+
+  const totalLaborCostAccumulated = useMemo(() => {
+    return entries.reduce((acc, e) => acc + (e.labor_cost || 0), 0);
   }, [entries]);
 
   if (!loadingPerms && !canViewDailyLogs) {
@@ -332,8 +356,8 @@ export const WorkDailyLogsTab: React.FC<WorkDailyLogsTabProps> = ({
   return (
     <div className="space-y-4 max-w-7xl mx-auto pb-12 animate-in fade-in duration-150">
       
-      {/* 1. CARDS DE RESUMO OPERACIONAL */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      {/* 1. CARDS DE RESUMO OPERACIONAL E FINANCEIRO */}
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
         <div className="p-3.5 bg-white rounded-2xl border border-slate-200/90 shadow-2xs space-y-1">
           <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
             Dias de Obra
@@ -342,7 +366,7 @@ export const WorkDailyLogsTab: React.FC<WorkDailyLogsTabProps> = ({
             <strong className="text-lg font-black text-slate-900 font-mono">
               {dayGroups.length}
             </strong>
-            <span className="text-[11px] text-slate-400">com apontamento</span>
+            <span className="text-[11px] text-slate-400">com diário</span>
           </div>
         </div>
 
@@ -367,6 +391,19 @@ export const WorkDailyLogsTab: React.FC<WorkDailyLogsTabProps> = ({
               {workersPerformance.length}
             </strong>
             <span className="text-[11px] text-slate-400">colaboradores</span>
+          </div>
+        </div>
+
+        {/* Card de Mão de Obra Acumulada no Diário */}
+        <div className="p-3.5 bg-white rounded-2xl border border-slate-200/90 shadow-2xs space-y-1">
+          <span className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider block flex items-center gap-1">
+            <DollarSign size={12} className="text-emerald-600" />
+            <span>Mão de Obra Real</span>
+          </span>
+          <div className="flex items-baseline gap-1.5">
+            <strong className="text-lg font-black text-emerald-800 font-mono truncate">
+              {canSeeFinancialValues ? formatCurrency(totalLaborCostAccumulated) : 'R$ ••••••'}
+            </strong>
           </div>
         </div>
 
@@ -448,9 +485,8 @@ export const WorkDailyLogsTab: React.FC<WorkDailyLogsTabProps> = ({
         </div>
       </div>
 
-      {/* 3. CONTEÚDO PRINCIPAL: TIMELINE OU PRODUTIVIDADE */}
+      {/* 3. CONTEÚDO PRINCIPAL */}
       {subView === 'timeline' ? (
-        /* VISUALIZAÇÃO DIA A DIA */
         filteredGroups.length === 0 ? (
           <div className="bg-white border border-slate-200 rounded-3xl p-12 text-center text-xs text-slate-400 space-y-2">
             <Calendar size={36} className="text-slate-300 mx-auto" />
@@ -467,7 +503,7 @@ export const WorkDailyLogsTab: React.FC<WorkDailyLogsTabProps> = ({
                 onClick={() => setSelectedDay(group)}
                 className="bg-white border border-slate-200/90 hover:border-sky-300 hover:shadow-md transition-all p-4 rounded-2xl cursor-pointer group flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4"
               >
-                {/* Lado Esquerdo: Data e Resumo */}
+                {/* Lado Esquerdo */}
                 <div className="flex items-center gap-3.5 min-w-0">
                   <div className="w-12 h-12 rounded-2xl bg-slate-100 group-hover:bg-sky-50 text-slate-600 group-hover:text-sky-600 border border-slate-200 flex flex-col items-center justify-center shrink-0 transition-colors">
                     <span className="text-[10px] font-bold uppercase tracking-wider">
@@ -490,6 +526,13 @@ export const WorkDailyLogsTab: React.FC<WorkDailyLogsTabProps> = ({
                       <span className="font-semibold text-slate-700">
                         {group.totalActivities} {group.totalActivities === 1 ? 'atividade' : 'atividades'} trabalhadas
                       </span>
+
+                      {canSeeFinancialValues && group.dayLaborCost > 0 && (
+                        <span className="text-[10px] bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold px-2 py-0.5 rounded-md">
+                          Mão de Obra: {formatCurrency(group.dayLaborCost)}
+                        </span>
+                      )}
+
                       {group.reworkCount > 0 && (
                         <span className="text-[10px] bg-amber-50 text-amber-800 border border-amber-200 font-bold px-2 py-0.5 rounded-md flex items-center gap-1">
                           <RotateCcw size={10} />
@@ -505,7 +548,7 @@ export const WorkDailyLogsTab: React.FC<WorkDailyLogsTabProps> = ({
                   </div>
                 </div>
 
-                {/* Lado Direito: Colaboradores e Seta */}
+                {/* Lado Direito */}
                 <div className="flex items-center gap-4 w-full sm:w-auto justify-between sm:justify-end border-t sm:border-t-0 pt-3 sm:pt-0 border-slate-100">
                   <div className="flex items-center gap-2">
                     <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider hidden md:inline">
@@ -538,11 +581,10 @@ export const WorkDailyLogsTab: React.FC<WorkDailyLogsTabProps> = ({
           </div>
         )
       ) : (
-        /* VISUALIZAÇÃO DE PRODUTIVIDADE & RENDIMENTO DA EQUIPE */
+        /* VISUALIZAÇÃO DE RENDIMENTO DA EQUIPE */
         <div className="space-y-4">
           <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs space-y-4">
             
-            {/* Topo da Tabela: Título e Seletor de Período */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
               <div>
                 <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-2">
@@ -554,7 +596,6 @@ export const WorkDailyLogsTab: React.FC<WorkDailyLogsTabProps> = ({
                 </p>
               </div>
 
-              {/* SELETOR DE PERÍODO */}
               <div className="flex items-center bg-slate-100 p-0.5 rounded-xl border border-slate-200 text-xs font-semibold self-start sm:self-auto">
                 <button
                   type="button"
@@ -606,6 +647,9 @@ export const WorkDailyLogsTab: React.FC<WorkDailyLogsTabProps> = ({
                       <th className="py-2.5 px-4 text-center">Tarefas Atuadas</th>
                       <th className="py-2.5 px-4 text-center">Finalizadas</th>
                       <th className="py-2.5 px-4 text-center">Retrabalhos</th>
+                      {canSeeFinancialValues && (
+                        <th className="py-2.5 px-4 text-right">Custo Absorvido</th>
+                      )}
                       <th className="py-2.5 px-4 text-right">Rendimento Relativo</th>
                       <th className="py-2.5 px-4 w-10 text-center"></th>
                     </tr>
@@ -659,6 +703,12 @@ export const WorkDailyLogsTab: React.FC<WorkDailyLogsTabProps> = ({
                             )}
                           </td>
 
+                          {canSeeFinancialValues && (
+                            <td className="py-3 px-4 text-right font-mono font-bold text-slate-900">
+                              {formatCurrency(wp.totalLaborCostProduced)}
+                            </td>
+                          )}
+
                           <td className="py-3 px-4 text-right">
                             <div className="flex items-center justify-end gap-2">
                               <div className="w-24 bg-slate-100 rounded-full h-1.5 overflow-hidden border border-slate-200/60 hidden sm:block">
@@ -703,6 +753,11 @@ export const WorkDailyLogsTab: React.FC<WorkDailyLogsTabProps> = ({
                 <h3 className="text-lg font-black text-slate-900 capitalize leading-tight">
                   {selectedDay.formattedDate}
                 </h3>
+                {canSeeFinancialValues && selectedDay.dayLaborCost > 0 && (
+                  <p className="text-xs font-bold text-emerald-700">
+                    Custo Total de Mão de Obra do Dia: {formatCurrency(selectedDay.dayLaborCost)}
+                  </p>
+                )}
               </div>
               <button
                 type="button"
@@ -765,8 +820,15 @@ export const WorkDailyLogsTab: React.FC<WorkDailyLogsTabProps> = ({
                         </div>
                       </div>
 
-                      <div className="shrink-0 bg-white border border-sky-200 text-sky-800 font-extrabold text-xs px-2.5 py-1 rounded-xl shadow-2xs font-mono">
-                        +{entry.quantity_executed} {entry.task_unit}
+                      <div className="flex items-center gap-2 shrink-0">
+                        {canSeeFinancialValues && (entry.labor_cost || 0) > 0 && (
+                          <span className="text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-lg">
+                            {formatCurrency(entry.labor_cost || 0)}
+                          </span>
+                        )}
+                        <div className="bg-white border border-sky-200 text-sky-800 font-extrabold text-xs px-2.5 py-1 rounded-xl shadow-2xs font-mono">
+                          +{entry.quantity_executed} {entry.task_unit}
+                        </div>
                       </div>
                     </div>
 
@@ -847,7 +909,7 @@ export const WorkDailyLogsTab: React.FC<WorkDailyLogsTabProps> = ({
               </button>
             </div>
 
-            <div className="grid grid-cols-3 gap-2.5 p-3 bg-slate-50 rounded-2xl border border-slate-200/80 text-xs shrink-0">
+            <div className={`grid ${canSeeFinancialValues ? 'grid-cols-4' : 'grid-cols-3'} gap-2.5 p-3 bg-slate-50 rounded-2xl border border-slate-200/80 text-xs shrink-0`}>
               <div>
                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Tarefas</span>
                 <strong className="text-sm font-black text-sky-700 font-mono mt-0.5 block">
@@ -866,6 +928,14 @@ export const WorkDailyLogsTab: React.FC<WorkDailyLogsTabProps> = ({
                   {selectedWorkerDetails.reworkCount}
                 </strong>
               </div>
+              {canSeeFinancialValues && (
+                <div className="border-l border-slate-200/80 pl-3">
+                  <span className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider block">Custo Absorvido</span>
+                  <strong className="text-sm font-black text-emerald-800 font-mono mt-0.5 block truncate">
+                    {formatCurrency(selectedWorkerDetails.totalLaborCostProduced)}
+                  </strong>
+                </div>
+              )}
             </div>
 
             <div className="space-y-2 flex-1 min-h-0 flex flex-col">
@@ -907,8 +977,15 @@ export const WorkDailyLogsTab: React.FC<WorkDailyLogsTabProps> = ({
                         </div>
                       </div>
 
-                      <div className="shrink-0 bg-white border border-sky-200 text-sky-800 font-extrabold text-xs px-2.5 py-1 rounded-xl shadow-2xs font-mono">
-                        +{entry.quantity_executed} {entry.task_unit}
+                      <div className="flex items-center gap-2 shrink-0">
+                        {canSeeFinancialValues && (entry.labor_cost || 0) > 0 && (
+                          <span className="text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-lg">
+                            {formatCurrency(entry.labor_cost || 0)}
+                          </span>
+                        )}
+                        <div className="shrink-0 bg-white border border-sky-200 text-sky-800 font-extrabold text-xs px-2.5 py-1 rounded-xl shadow-2xs font-mono">
+                          +{entry.quantity_executed} {entry.task_unit}
+                        </div>
                       </div>
                     </div>
 

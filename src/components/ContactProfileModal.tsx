@@ -46,6 +46,9 @@ interface ContactProfileModalProps {
   onOpenOpportunity?: (opportunityId: string) => void;
   onCreateOpportunityForContact?: (contactId: string) => void;
   zIndexLevel?: 'base' | 'overlay';
+  triggerInteraction?: boolean;
+  triggerAttach?: boolean;
+  onResetTrigger?: () => void;
 }
 
 interface PhoneItem {
@@ -204,7 +207,10 @@ export const ContactProfileModal: React.FC<ContactProfileModalProps> = ({
   onContactUpdated,
   onNavigateToContact,
   onOpenOpportunity,
-  onCreateOpportunityForContact
+  onCreateOpportunityForContact,
+  triggerInteraction = false,
+  triggerAttach = false,
+  onResetTrigger
 }) => {
   const { user } = useAuth();
   const { permissions } = usePermissions();
@@ -233,8 +239,7 @@ export const ContactProfileModal: React.FC<ContactProfileModalProps> = ({
   const [isActionsMenuOpen, setIsActionsMenuOpen] = useState(false);
   const actionsMenuRef = useRef<HTMLDivElement>(null);
 
-  // Ações no Mobile
-  const [isMobileActionSheetOpen, setIsMobileActionSheetOpen] = useState(false);
+  // Ações no Topo Mobile (...)
   const [isMobileTopMenuOpen, setIsMobileTopMenuOpen] = useState(false);
 
   const [isEditContactModalOpen, setIsEditContactModalOpen] = useState(false);
@@ -315,6 +320,26 @@ export const ContactProfileModal: React.FC<ContactProfileModalProps> = ({
   const [opportunities, setOpportunities] = useState<ContactOpportunityItem[]>([]);
   const [loadingOpportunities, setLoadingOpportunities] = useState(false);
 
+  // Gatilhos de acionamento vindos do botão flutuante central do App.tsx
+  useEffect(() => {
+    if (triggerInteraction) {
+      setActiveTab('historico');
+      setShowInteractionForm(true);
+      if (onResetTrigger) onResetTrigger();
+    }
+  }, [triggerInteraction, onResetTrigger]);
+
+  useEffect(() => {
+    if (triggerAttach) {
+      setActiveTab('anexos');
+      setTimeout(() => {
+        const fileInput = document.querySelector('.hide-mobile-doc-btn input[type="file"]') as HTMLInputElement;
+        if (fileInput) fileInput.click();
+      }, 300);
+      if (onResetTrigger) onResetTrigger();
+    }
+  }, [triggerAttach, onResetTrigger]);
+
   useEffect(() => {
     if (!isOpen) return;
     const main = document.querySelector('main');
@@ -358,7 +383,7 @@ export const ContactProfileModal: React.FC<ContactProfileModalProps> = ({
     if (!contact) return false;
     if (currentMembershipId && contact.created_by === currentMembershipId) return true;
 
-    const currentUserId = resolvedUserId || (user as any)?.id|| (user as any)?.user?.id || (user as any)?.profile?.id;
+    const currentUserId = resolvedUserId || (user as any)?.id || (user as any)?.user?.id || (user as any)?.profile?.id;
     const profileId = (user as any)?.profile?.id;
 
     if (currentUserId && contact.created_by === currentUserId) return true;
@@ -384,10 +409,6 @@ export const ContactProfileModal: React.FC<ContactProfileModalProps> = ({
     return permissions.isOwnerOrAdmin || (permissions.canDeleteContacts && isContactOwner);
   }, [permissions.isOwnerOrAdmin, permissions.canDeleteContacts, isContactOwner]);
 
-  const canShowMobileFab = useMemo(() => {
-    return canEditThisContact || Boolean(permissions?.canManageDeals);
-  }, [canEditThisContact, permissions?.canManageDeals]);
-
   useEffect(() => {
     setActiveContactId(contactId);
   }, [contactId]);
@@ -398,7 +419,6 @@ export const ContactProfileModal: React.FC<ContactProfileModalProps> = ({
       setShowDeleteModal(false);
       setShowChangeOwnerModal(false);
       setIsActionsMenuOpen(false);
-      setIsMobileActionSheetOpen(false);
       setIsMobileTopMenuOpen(false);
       setUnlinkTarget(null);
       setMethodModal(null);
@@ -416,7 +436,6 @@ export const ContactProfileModal: React.FC<ContactProfileModalProps> = ({
       setShowDeleteModal(false);
       setShowChangeOwnerModal(false);
       setIsActionsMenuOpen(false);
-      setIsMobileActionSheetOpen(false);
       setIsMobileTopMenuOpen(false);
       setUnlinkTarget(null);
       setMethodModal(null);
@@ -1314,7 +1333,6 @@ export const ContactProfileModal: React.FC<ContactProfileModalProps> = ({
         : 'absolute inset-0'
     }`}>
       
-      {/* Estilos para rolagem leve, formulário timeline recolhido e botão de anexo no mobile */}
       <style>{`
         .lume-scrollbar::-webkit-scrollbar {
           width: 5px;
@@ -1356,7 +1374,7 @@ export const ContactProfileModal: React.FC<ContactProfileModalProps> = ({
         }
       `}</style>
 
-      {/* 1. TOPBAR NO MOBILE (< lg): 100% da tela, Voltar na esq, Título padronizado, Menu de Ações na dir */}
+      {/* 1. TOPBAR NO MOBILE (< lg) */}
       <div className="flex lg:hidden items-center justify-between px-3.5 py-2.5 bg-white border-b border-slate-200/90 shrink-0 z-30 shadow-2xs">
         <button
           type="button"
@@ -1371,7 +1389,7 @@ export const ContactProfileModal: React.FC<ContactProfileModalProps> = ({
           Detalhes do Contato
         </span>
 
-        {/* Botão de Menu do Topo no Mobile */}
+        {/* Menu do Topo no Mobile (Editar, Excluir) */}
         <button
           type="button"
           onClick={() => setIsMobileTopMenuOpen(true)}
@@ -1437,7 +1455,7 @@ export const ContactProfileModal: React.FC<ContactProfileModalProps> = ({
       {/* 3. CORPO: DIVISÃO RESPONSIVA */}
       <div className="flex-1 flex flex-col lg:flex-row min-h-0 overflow-y-auto lg:overflow-hidden">
         
-        {/* COLUNA LATERAL ESQUERDA (+25% de largura: lg:w-[440px]) */}
+        {/* COLUNA LATERAL ESQUERDA (DADOS CADASTRAIS) */}
         <aside className={`w-full lg:w-[440px] bg-white border-b lg:border-b-0 lg:border-r border-slate-200/90 flex flex-col shrink-0 overflow-y-auto lume-scrollbar p-4 sm:p-5 space-y-3.5 ${
           activeTab !== 'dados' ? 'hidden lg:flex' : 'flex'
         }`}>
@@ -1558,7 +1576,7 @@ export const ContactProfileModal: React.FC<ContactProfileModalProps> = ({
                 </div>
               </div>
 
-              {/* Responsável & Origem com AVATAR E PRIMEIRO/SEGUNDO NOME */}
+              {/* Responsável & Origem */}
               <div className="p-3 bg-slate-50/70 border border-slate-200/80 rounded-2xl space-y-2 text-xs">
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Origem:</span>
@@ -1594,7 +1612,7 @@ export const ContactProfileModal: React.FC<ContactProfileModalProps> = ({
                 </div>
               </div>
 
-              {/* Documentação & Dados Cadastrais com máscaras aplicadas */}
+              {/* Documentação & Dados Cadastrais */}
               <div className="p-3 bg-slate-50/70 border border-slate-200/80 rounded-2xl space-y-1.5 text-xs">
                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
                   Documentação & Dados Cadastrais
@@ -1680,8 +1698,8 @@ export const ContactProfileModal: React.FC<ContactProfileModalProps> = ({
                             <div className="flex items-center gap-1.5 shrink-0">
                               {p.is_primary && (
                                 <span title="Principal">
-  <Star size={13} className="fill-amber-400 text-amber-500" />
-</span>
+                                  <Star size={13} className="fill-amber-400 text-amber-500" />
+                                </span>
                               )}
                               {canEditThisContact && (
                                 <button
@@ -1716,8 +1734,8 @@ export const ContactProfileModal: React.FC<ContactProfileModalProps> = ({
 
                             {!p.notes && p.is_primary && (
                               <span title="Principal">
-  <Star size={13} className="fill-amber-400 text-amber-500" />
-</span>
+                                <Star size={13} className="fill-amber-400 text-amber-500" />
+                              </span>
                             )}
 
                             {!p.notes && canEditThisContact && (
@@ -1768,8 +1786,8 @@ export const ContactProfileModal: React.FC<ContactProfileModalProps> = ({
                             <div className="flex items-center gap-1.5 shrink-0">
                               {e.is_primary && (
                                 <span title="Principal">
-  <Star size={13} className="fill-amber-400 text-amber-500" />
-</span>
+                                  <Star size={13} className="fill-amber-400 text-amber-500" />
+                                </span>
                               )}
                               {canEditThisContact && (
                                 <button
@@ -1799,8 +1817,8 @@ export const ContactProfileModal: React.FC<ContactProfileModalProps> = ({
                             <div className="flex items-center gap-1.5 shrink-0">
                               {e.is_primary && (
                                 <span title="Principal">
-  <Star size={13} className="fill-amber-400 text-amber-500" />
-</span>
+                                  <Star size={13} className="fill-amber-400 text-amber-500" />
+                                </span>
                               )}
                               {canEditThisContact && (
                                 <button
@@ -1853,8 +1871,8 @@ export const ContactProfileModal: React.FC<ContactProfileModalProps> = ({
                               <div className="flex items-center gap-1.5 shrink-0">
                                 {addr.is_primary && (
                                   <span title="Principal">
-  <Star size={13} className="fill-amber-400 text-amber-500" />
-</span>
+                                    <Star size={13} className="fill-amber-400 text-amber-500" />
+                                  </span>
                                 )}
                                 {canEditThisContact && (
                                   <button
@@ -1886,8 +1904,8 @@ export const ContactProfileModal: React.FC<ContactProfileModalProps> = ({
                                 <>
                                   {addr.is_primary && (
                                     <span title="Principal">
-  <Star size={13} className="fill-amber-400 text-amber-500" />
-</span>
+                                      <Star size={13} className="fill-amber-400 text-amber-500" />
+                                    </span>
                                   )}
                                   {canEditThisContact && (
                                     <button
@@ -1980,12 +1998,12 @@ export const ContactProfileModal: React.FC<ContactProfileModalProps> = ({
           )}
         </aside>
 
-        {/* PAINEL PRINCIPAL À DIREITA: ABAS (HISTÓRICO, OPORTUNIDADES, ANEXOS) */}
+        {/* PAINEL PRINCIPAL À DIREITA */}
         <main className={`flex-1 flex flex-col min-w-0 bg-slate-50/60 overflow-hidden ${
           activeTab === 'dados' ? 'hidden lg:flex' : 'flex'
         }`}>
           
-          {/* BARRA SUPERIOR DE NAVEGAÇÃO DE ABAS NO DESKTOP (lg) - DENTRO DO PAINEL DIREITO */}
+          {/* BARRA SUPERIOR DE NAVEGAÇÃO DE ABAS NO DESKTOP (lg) */}
           <div className="hidden lg:flex px-6 bg-white border-b border-slate-200/90 items-center justify-between shrink-0 shadow-2xs">
             <div className="flex items-center gap-6 text-xs font-bold">
               <button
@@ -2029,9 +2047,9 @@ export const ContactProfileModal: React.FC<ContactProfileModalProps> = ({
           </div>
 
           {/* CONTEÚDO DAS ABAS */}
-          <div className="flex-1 overflow-y-auto lume-scrollbar p-4 sm:p-6">
+          <div className="flex-1 overflow-y-auto lume-scrollbar p-4 sm:p-6 pb-24 lg:pb-6">
             
-            {/* ABA HISTÓRICO: Formulário recolhido sem fechar involuntariamente */}
+            {/* ABA HISTÓRICO */}
             {(activeTab === 'historico' || (activeTab === 'dados' && !isMobile)) && contact && (
               <div 
                 className={`max-w-4xl mx-auto space-y-4 ${!showInteractionForm ? 'timeline-form-hidden' : ''}`}
@@ -2052,7 +2070,7 @@ export const ContactProfileModal: React.FC<ContactProfileModalProps> = ({
                   setTimeout(() => setShowInteractionForm(false), 500);
                 }}
               >
-                {/* Botão de Abrir / Fechar Formulário de Registro de Atividade (Apenas Desktop) */}
+                {/* Botão de Registro de Interação visível apenas no Desktop */}
                 {canEditThisContact && (
                   <div className="hidden md:flex bg-white border border-slate-200/90 rounded-2xl p-3 shadow-2xs items-center justify-between">
                     <span className="text-xs text-slate-600 font-medium">Registrar uma nova nota, ligação, reunião ou mensagem:</span>
@@ -2095,6 +2113,7 @@ export const ContactProfileModal: React.FC<ContactProfileModalProps> = ({
                     </p>
                   </div>
 
+                  {/* Botão Nova Oportunidade visível apenas no Desktop */}
                   {permissions.canManageDeals && (
                     <button
                       type="button"
@@ -2185,111 +2204,7 @@ export const ContactProfileModal: React.FC<ContactProfileModalProps> = ({
         </main>
       </div>
 
-      {/* BOTÃO FLUTUANTE (FAB) (+) EXCLUSIVO MOBILE */}
-      {canShowMobileFab && (
-        <button
-          type="button"
-          onClick={() => setIsMobileActionSheetOpen(true)}
-          className="md:hidden fixed bottom-6 right-6 z-[60] w-14 h-14 bg-sky-600 hover:bg-sky-500 active:scale-95 text-white rounded-full shadow-2xl flex items-center justify-center cursor-pointer transition-all border border-sky-400/40"
-          title="Ações Rápidas"
-        >
-          <Plus size={26} strokeWidth={2.5} />
-        </button>
-      )}
-
-      {/* ACTION SHEET 1: ABERTURA PELO BOTÃO FLUTUANTE (+) */}
-      {isMobileActionSheetOpen && (
-        <div className="md:hidden fixed inset-0 z-[160] flex flex-col justify-end bg-slate-950/70 backdrop-blur-xs animate-in fade-in duration-150">
-          <div 
-            className="absolute inset-0" 
-            onClick={() => setIsMobileActionSheetOpen(false)} 
-          />
-
-          <div className="relative bg-white rounded-t-3xl p-5 space-y-3 animate-in slide-in-from-bottom duration-200 border-t border-slate-200">
-            <div className="w-12 h-1.5 bg-slate-200 rounded-full mx-auto mb-2" />
-
-            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider text-center">
-              Adicionar ao Contato
-            </h3>
-
-            <div className="space-y-2 pt-1">
-              {canEditThisContact && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsMobileActionSheetOpen(false);
-                    setActiveTab('historico');
-                    setShowInteractionForm(true);
-                  }}
-                  className="w-full p-3 bg-slate-50 hover:bg-slate-100 rounded-2xl flex items-center gap-3 text-slate-800 font-semibold text-xs transition-colors"
-                >
-                  <div className="w-9 h-9 rounded-xl bg-sky-100 text-sky-700 flex items-center justify-center shrink-0">
-                    <Clock size={18} />
-                  </div>
-                  <div className="text-left">
-                    <p className="text-sm font-bold text-slate-900">Registrar Interação / Tarefa</p>
-                    <p className="text-[11px] text-slate-500 font-normal">Adicione notas, reuniões ou ligações</p>
-                  </div>
-                </button>
-              )}
-
-              {permissions.canManageDeals && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsMobileActionSheetOpen(false);
-                    handleCreateNewOpportunity();
-                  }}
-                  className="w-full p-3 bg-slate-50 hover:bg-slate-100 rounded-2xl flex items-center gap-3 text-slate-800 font-semibold text-xs transition-colors"
-                >
-                  <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
-                    <TrendingUp size={18} />
-                  </div>
-                  <div className="text-left">
-                    <p className="text-sm font-bold text-slate-900">Nova Oportunidade</p>
-                    <p className="text-[11px] text-slate-500 font-normal">Criar negociação no funil comercial</p>
-                  </div>
-                </button>
-              )}
-
-              {canEditThisContact && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsMobileActionSheetOpen(false);
-                    setActiveTab('anexos');
-                    setTimeout(() => {
-                      const fileInput = document.querySelector('.hide-mobile-doc-btn input[type="file"]') as HTMLInputElement;
-                      if (fileInput) fileInput.click();
-                    }, 300);
-                  }}
-                  className="w-full p-3 bg-slate-50 hover:bg-slate-100 rounded-2xl flex items-center gap-3 text-slate-800 font-semibold text-xs transition-colors"
-                >
-                  <div className="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center shrink-0">
-                    <FileUp size={18} />
-                  </div>
-                  <div className="text-left">
-                    <p className="text-sm font-bold text-slate-900">Anexar Documento</p>
-                    <p className="text-[11px] text-slate-500 font-normal">Upload de arquivos ou contratos</p>
-                  </div>
-                </button>
-              )}
-            </div>
-
-            <div className="pt-2">
-              <button
-                type="button"
-                onClick={() => setIsMobileActionSheetOpen(false)}
-                className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-xl cursor-pointer"
-              >
-                Fechar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ACTION SHEET 2: ABERTURA PELO MENU DO TOPO (...) -> Editar e Excluir */}
+      {/* 4. ACTION SHEET MOBILE (ABERTO PELO MENU DO TOPO ...) */}
       {isMobileTopMenuOpen && (
         <div className="md:hidden fixed inset-0 z-[160] flex flex-col justify-end bg-slate-950/70 backdrop-blur-xs animate-in fade-in duration-150">
           <div 
@@ -2389,7 +2304,7 @@ export const ContactProfileModal: React.FC<ContactProfileModalProps> = ({
         document.body
       )}
 
-      {/* POPOVER HOVER DO CONTATO VINCULADO (ABRE PARA CIMA VIA PORTAL) */}
+      {/* POPOVER HOVER DO CONTATO VINCULADO (PORTAL NO BODY) */}
       {hoveredLinkData && createPortal(
         <div
           style={{ position: 'fixed', top: `${hoveredLinkData.top}px`, left: `${hoveredLinkData.left}px` }}
@@ -2471,7 +2386,7 @@ export const ContactProfileModal: React.FC<ContactProfileModalProps> = ({
         document.body
       )}
 
-      {/* MODAL DE EDIÇÃO COMPLETO DO CONTATO */}
+      {/* MODAL DE EDIÇÃO DO CONTATO */}
       {isEditContactModalOpen && contact && (
         <div className="fixed inset-0 z-[260] flex flex-col justify-end sm:justify-center items-center p-0 sm:p-4 bg-slate-950/70 backdrop-blur-xs animate-in fade-in duration-150">
           <div className="bg-white rounded-t-3xl sm:rounded-3xl border border-slate-200 p-5 sm:p-6 w-full sm:max-w-lg shadow-2xl space-y-4 max-h-[85vh] sm:max-h-[90vh] overflow-y-auto animate-in slide-in-from-bottom duration-200 sm:zoom-in-95">
